@@ -17,9 +17,36 @@ static video_data_t* s_video_data = NULL;
 
 struct window {
     SDL_Window* window;
-
     bool close_requested;
+
+    backbuffer_t* backbuffer;
 };
+
+static backbuffer_t* backbuffer_create(uint32_t width, uint32_t height, SDL_PixelFormat format) {
+    SDL_Surface* surface = SDL_CreateSurface((int)width, (int)height, format);
+    if (!surface) {
+        return NULL;
+    }
+
+    backbuffer_t* backbuffer = mem_alloc(sizeof(backbuffer_t));
+    backbuffer->data = surface->pixels;
+    backbuffer->width = width;
+    backbuffer->height = height;
+    backbuffer->surface = surface;
+
+    return backbuffer;
+}
+
+static void backbuffer_destroy(backbuffer_t* backbuffer) {
+    if (!backbuffer) {
+        return;
+    }
+
+    SDL_Surface* surface = (SDL_Surface*)backbuffer->surface;
+    SDL_DestroySurface(surface);
+
+    mem_free(backbuffer);
+}
 
 static guint window_hash_id(gconstpointer key) {
     // guh
@@ -82,6 +109,7 @@ window_t* window_create(const char* title, uint32_t width, uint32_t height) {
     window_t* window = mem_alloc(sizeof(window_t));
     window->window = sdl_window;
     window->close_requested = false;
+    window->backbuffer = NULL;
 
     size_t id = (size_t)SDL_GetWindowID(sdl_window);
     g_hash_table_insert(s_video_data->windows, (gpointer)id, window);
@@ -97,10 +125,29 @@ void window_destroy(window_t* window) {
     size_t id = (size_t)SDL_GetWindowID(window->window);
     g_hash_table_remove(s_video_data->windows, (gconstpointer)id);
 
+    backbuffer_destroy(window->backbuffer);
+
     SDL_DestroyWindow(window->window);
     mem_free(window);
 
     video_remove_ref();
+}
+
+bool window_get_framebuffer_size(window_t* window, uint32_t* width, uint32_t* height) {
+    SDL_Surface* surface = SDL_GetWindowSurface(window->window);
+    if (!surface) {
+        return false;
+    }
+
+    if (width) {
+        *width = (uint32_t)surface->w;
+    }
+
+    if (height) {
+        *height = (uint32_t)surface->h;
+    }
+
+    return true;
 }
 
 static void window_close_requested(const SDL_WindowEvent* event) {
@@ -137,3 +184,63 @@ void window_poll() {
 }
 
 bool window_is_close_requested(window_t* window) { return window->close_requested; }
+
+static bool window_is_backbuffer_valid(window_t* window) {
+    if (!window->backbuffer) {
+        return false;
+    }
+
+    uint32_t width, height;
+    if (!window_get_framebuffer_size(window, &width, &height)) {
+        return false;
+    }
+
+    return window->backbuffer->width == width && window->backbuffer->height == height;
+}
+
+static bool window_validate_backbuffer(window_t* window) {
+    if (window_is_backbuffer_valid(window)) {
+        return true;
+    }
+
+    uint32_t width, height;
+    if (!window_get_framebuffer_size(window, &width, &height)) {
+        return false;
+    }
+
+    backbuffer_destroy(window->backbuffer);
+    window->backbuffer = backbuffer_create(width, height, SDL_PIXELFORMAT_RGBA8888);
+
+    return window->backbuffer;
+}
+
+backbuffer_t* window_get_backbuffer(window_t* window) {
+    if (!window_validate_backbuffer(window)) {
+        return NULL;
+    }
+
+    return window->backbuffer;
+}
+
+bool window_swap_buffers(window_t* window) {
+    if (!window_is_backbuffer_valid(window)) {
+        return true;
+    }
+
+    SDL_Surface* surface = SDL_GetWindowSurface(window->window);
+    SDL_Surface* backbuffer = (SDL_Surface*)window->backbuffer->surface;
+
+    if (!surface) {
+        return false;
+    }
+
+    if (!SDL_BlitSurface(backbuffer, NULL, surface, NULL)) {
+        return false;
+    }
+
+    if (!SDL_UpdateWindowSurface(window->window)) {
+        return false;
+    }
+
+    return true;
+}
