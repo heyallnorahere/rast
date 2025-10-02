@@ -14,8 +14,13 @@ int main(int argc, const char** argv) {
             break;
         }
 
-        size_t data_size = backbuffer->width * backbuffer->height * 4;
-        memset(backbuffer->data, 0xFF, data_size);
+        uint32_t* pixels = (uint32_t*)backbuffer->data;
+        for (uint32_t i = 0; i < backbuffer->height; i++) {
+            for (uint32_t j = 0; j < backbuffer->width; j++) {
+                uint32_t offset = j + i * backbuffer->width;
+                pixels[offset] = 0x00FF00FF;
+            }
+        }
 
         if (!window_swap_buffers(window)) {
             success = false;
