@@ -16,6 +16,7 @@ pkg_check_modules(glib2 REQUIRED IMPORTED_TARGET glib-2.0)
 find_package(SDL3 REQUIRED)
 target_link_libraries(
     rast PRIVATE
+    m
     SDL3::SDL3
     PkgConfig::glib2
 )

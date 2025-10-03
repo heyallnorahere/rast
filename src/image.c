@@ -60,3 +60,7 @@ size_t image_get_pixel_stride(image_format format) {
 
     return details->bytes_per_pixel;
 }
+
+uint32_t image_get_pixel_index(const image_t* image, uint32_t x, uint32_t y) {
+    return y * image->width + x;
+}
