@@ -7,13 +7,12 @@
 #include <glib.h>
 
 static void image_set_pixel(image_t* image, uint32_t x, uint32_t y, const image_pixel* value) {
-    size_t stride = image_get_pixel_stride(image->format);
     uint32_t index = image_get_pixel_index(image, x, y);
 
-    size_t offset = stride * index;
+    size_t offset = image->pixel_stride * index;
     void* pixel_address = image->data + offset;
 
-    memcpy(pixel_address, value, stride);
+    memcpy(pixel_address, value, image->pixel_stride);
 }
 
 static void framebuffer_fill_attachment(image_t* attachment, const image_pixel* value) {
@@ -112,10 +111,12 @@ static bool face_contains_point(bool cw, const struct vertex_output* outputs, ui
             return false;
         }
 
-        if (weights) {
-            area_sum += area;
-            areas[(i + 2) % vertices] = area;
-        }
+        area_sum += area;
+        areas[(i + 2) % vertices] = area;
+    }
+
+    if (area_sum <= 0) {
+        return false;
     }
 
     if (weights) {
@@ -189,6 +190,116 @@ static void shader_blend_parameters(const struct shader* shader,
     }
 }
 
+static bool pre_fragment_tests(const struct pipeline* pipeline, struct framebuffer* fb, uint32_t x,
+                               uint32_t y, float current_depth) {
+    for (uint32_t i = 0; i < fb->attachment_count; i++) {
+        image_t* attachment = fb->attachments[i];
+
+        switch (attachment->format) {
+        case IMAGE_FORMAT_DEPTH:
+            if (pipeline->depth.test) {
+                const float* depth_data = attachment->data;
+
+                uint32_t index = image_get_pixel_index(attachment, x, y);
+                float closest_depth = depth_data[index];
+
+                if (current_depth > closest_depth) {
+                    return false;
+                }
+            }
+
+            break;
+        default:
+            // nothing
+            break;
+        }
+    }
+
+    return true;
+}
+
+struct pixel_context {
+    const struct pipeline* pipeline;
+    struct framebuffer* fb;
+
+    const struct vertex_output* outputs;
+    uint8_t vertices;
+
+    uint32_t instance_id;
+    void* uniform_data;
+};
+
+struct pixel_data {
+    uint32_t x, y;
+    float point[2];
+};
+
+static void render_pixel(const struct pixel_data* data, const struct pixel_context* pixel_context) {
+    float weights[pixel_context->vertices];
+
+    if (!face_contains_point(pixel_context->pipeline->winding == WINDING_ORDER_CW,
+                             pixel_context->outputs, pixel_context->vertices, data->point,
+                             weights)) {
+        return;
+    }
+
+    float inverse_depth = 0.f;
+    for (uint8_t i = 0; i < pixel_context->vertices; i++) {
+        inverse_depth += weights[i] / pixel_context->outputs[i].position[2];
+    }
+
+    float depth = 1.f / inverse_depth;
+    if (!pre_fragment_tests(pixel_context->pipeline, pixel_context->fb, data->x, data->y, depth)) {
+        return;
+    }
+
+    struct shader_context context;
+    context.instance_index = pixel_context->instance_id;
+    context.uniform_data = pixel_context->uniform_data;
+
+    if (pixel_context->pipeline->shader.working_size > 0) {
+        context.working_data = mem_alloc(pixel_context->pipeline->shader.working_size);
+    } else {
+        context.working_data = NULL;
+    }
+
+    shader_blend_parameters(&pixel_context->pipeline->shader, pixel_context->outputs,
+                            pixel_context->vertices, weights, depth, context.working_data);
+
+    uint32_t color = pixel_context->pipeline->shader.fragment_stage(&context);
+    for (uint32_t i = 0; i < pixel_context->fb->attachment_count; i++) {
+        image_t* attachment = pixel_context->fb->attachments[i];
+
+        bool discard = false;
+        image_pixel value;
+
+        switch (attachment->format) {
+        case IMAGE_FORMAT_COLOR:
+            value.color = color;
+            break;
+        case IMAGE_FORMAT_DEPTH:
+            if (pixel_context->pipeline->depth.write) {
+                value.depth = depth;
+            } else {
+                discard = true;
+            }
+
+            break;
+        default:
+            memset(&value, 0, sizeof(image_pixel));
+            break;
+        }
+
+        if (discard) {
+            continue;
+        }
+
+        image_set_pixel(attachment, data->x, data->y, &value);
+    }
+
+    mem_free(context.working_data);
+}
+
 static void render_face(const struct indexed_render_call* data, uint32_t instance, uint32_t face,
                         uint8_t indices) {
     struct shader_context context;
@@ -201,55 +312,27 @@ static void render_face(const struct indexed_render_call* data, uint32_t instanc
 
     // todo: support geometry shaders?
 
-    float point[2];
-    float weights[indices];
+    struct pixel_context pixel_context;
+    pixel_context.pipeline = data->pipeline;
+    pixel_context.fb = data->framebuffer;
+    pixel_context.instance_id = instance;
+    pixel_context.outputs = outputs;
+    pixel_context.vertices = indices;
+    pixel_context.uniform_data = data->uniform_data;
 
-    context.working_data = mem_alloc(data->pipeline->shader.working_size);
+    float point[2];
     for (uint32_t y = 0; y < data->framebuffer->height; y++) {
         point[1] = (float)y / (float)data->framebuffer->height * 2.f - 1.f;
 
         for (uint32_t x = 0; x < data->framebuffer->width; x++) {
             point[0] = (float)x / (float)data->framebuffer->width * 2.f - 1.f;
 
-            if (!face_contains_point(data->pipeline->winding == WINDING_ORDER_CW, outputs, indices,
-                                     point, weights)) {
-                continue;
-            }
+            struct pixel_data pixel_data;
+            pixel_data.x = x;
+            pixel_data.y = y;
+            memcpy(pixel_data.point, point, 2 * sizeof(float));
 
-            float inverse_depth = 0.f;
-            for (uint8_t i = 0; i < indices; i++) {
-                inverse_depth += weights[i] / outputs[i].position[2];
-            }
-
-            float depth = 1.f / inverse_depth;
-            // todo: check depth
-
-            shader_blend_parameters(&data->pipeline->shader, outputs, indices, weights, depth,
-                                    context.working_data);
-
-            uint32_t color = data->pipeline->shader.fragment_stage(&context);
-            for (uint32_t i = 0; i < data->framebuffer->attachment_count; i++) {
-                image_t* attachment = data->framebuffer->attachments[i];
-
-                bool discard = false;
-                image_pixel value;
-
-                switch (attachment->format) {
-                case IMAGE_FORMAT_COLOR:
-                    value.color = color;
-                    break;
-                    // todo: write depth
-                default:
-                    memset(&value, 0, sizeof(image_pixel));
-                    break;
-                }
-
-                if (discard) {
-                    continue;
-                }
-
-                image_set_pixel(attachment, x, y, &value);
-            }
+            render_pixel(&pixel_data, &pixel_context);
         }
     }
 

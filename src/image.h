@@ -6,6 +6,7 @@
 
 typedef enum {
     IMAGE_FORMAT_COLOR,
+    IMAGE_FORMAT_DEPTH,
 } image_format;
 
 typedef struct image {
@@ -13,6 +14,7 @@ typedef struct image {
 
     uint32_t width, height;
     image_format format;
+    size_t pixel_stride;
 
     void* surface;
 } image_t;
@@ -20,7 +22,6 @@ typedef struct image {
 image_t* image_allocate(uint32_t width, uint32_t height, image_format format);
 void image_free(image_t* image);
 
-size_t image_get_pixel_stride(image_format format);
 uint32_t image_get_pixel_index(const image_t* image, uint32_t x, uint32_t y);
 
 #endif
