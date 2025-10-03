@@ -166,12 +166,12 @@ int main(int argc, const char** argv) {
         clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &t1);
         time_diff(&t0, &t1, &delta);
 
-        float t = (float)delta.tv_sec + (float)delta.tv_nsec / 1e-9f;
+        float t = (float)delta.tv_sec + (float)delta.tv_nsec / 1e+9f;
         for (uint32_t i = 0; i < instance_count; i++) {
             struct instance* instance = &instances[i];
 
             float theta = instance->theta + t * (float)M_PI / 2.f;
-            instance->depth = sinf(theta) * 0.45f + 0.5f;
+            instance->depth = sinf(theta) * 0.5f + 0.5f;
         }
 
         image_t* backbuffer = window_get_backbuffer(window);
