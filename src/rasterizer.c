@@ -85,35 +85,108 @@ static void process_face_vertices(const struct indexed_render_call* data, uint32
     }
 }
 
-static bool face_contains_point(bool cw, bool cull, const struct vertex_output* outputs,
-                                uint8_t vertices, const float* point) {
-    float current_to_next[2];
-    float current_to_point[2];
-    float normal[2];
+static float signed_quad_area(const float* a, const float* b, const float* c, bool cw) {
+    float ab[2], ab_normal[2];
+    vec_sub(b, a, 2, ab);
+    vec_rot90(ab, ab_normal, cw);
 
-    int8_t common_direction = 0;
+    float ac[2];
+    vec_sub(c, a, 2, ac);
+
+    return vec_dot(ac, ab_normal, 2);
+}
+
+static bool face_contains_point(bool cw, const struct vertex_output* outputs, uint8_t vertices,
+                                const float* point, float* weights) {
+    float area_sum = 0.f;
+    float areas[vertices];
+
     for (uint8_t i = 0; i < vertices; i++) {
+        const float* a = outputs[i].position;
+
         uint8_t next_vertex_id = (i + 1) % vertices;
+        const float* b = outputs[next_vertex_id].position;
 
-        vec_sub(outputs[next_vertex_id].position, outputs[i].position, 2, current_to_next);
-        vec_sub(point, outputs[i].position, 2, current_to_point);
-
-        vec_rot90(current_to_next, normal, cw);
-        float coefficient = vec_dot(normal, current_to_point, 2);
-
-        if (cull && coefficient < 0.f) {
+        float area = signed_quad_area(a, b, point, cw);
+        if (area <= 0.f) {
             return false;
         }
 
-        int8_t current_direction = coefficient > 0.f ? 1 : (coefficient < 0.f ? -1 : 0);
-        if (common_direction == 0) {
-            common_direction = current_direction;
-        } else if (common_direction != current_direction) {
-            return false;
+        if (weights) {
+            area_sum += area;
+            areas[(i + 2) % vertices] = area;
+        }
+    }
+
+    if (weights) {
+        for (uint8_t i = 0; i < vertices; i++) {
+            weights[i] = areas[i] / area_sum;
         }
     }
 
     return true;
+}
+
+static size_t parameter_element_stride(element_type type) {
+    switch (type) {
+    case ELEMENT_TYPE_BYTE:
+        return 1;
+        break;
+    case ELEMENT_TYPE_FLOAT:
+        return sizeof(float);
+        break;
+    default:
+        g_assert_not_reached();
+    }
+}
+
+static void shader_blend_parameters(const struct shader* shader,
+                                    const struct vertex_output* outputs, uint8_t indices,
+                                    const float* weights, float current_depth, void* result) {
+    for (uint32_t i = 0; i < shader->inter_stage_parameter_count; i++) {
+        const struct blended_parameter* parameter = &shader->inter_stage_parameters[i];
+
+        size_t stride = parameter_element_stride(parameter->type);
+        for (uint32_t j = 0; j < parameter->count; j++) {
+            size_t buffer_offset = parameter->offset + j * stride;
+
+            float result_value = 0.f;
+            for (uint8_t k = 0; k < indices; k++) {
+                const void* source_data = outputs[k].working_data + buffer_offset;
+
+                float vertex_value;
+                switch (parameter->type) {
+                case ELEMENT_TYPE_BYTE:
+                    vertex_value = (float)*(uint8_t*)source_data;
+                    break;
+                case ELEMENT_TYPE_FLOAT:
+                    vertex_value = *(float*)source_data;
+                    break;
+                default:
+                    g_assert_not_reached();
+                }
+
+                float weight = weights[k];
+                float depth = outputs[k].position[2];
+
+                result_value += vertex_value * weight / depth;
+            }
+
+            result_value *= current_depth;
+
+            void* destination_data = result + buffer_offset;
+            switch (parameter->type) {
+            case ELEMENT_TYPE_BYTE:
+                *(uint8_t*)destination_data = (uint8_t)result_value;
+                break;
+            case ELEMENT_TYPE_FLOAT:
+                *(float*)destination_data = result_value;
+                break;
+            default:
+                g_assert_not_reached();
+            }
+        }
+    }
 }
 
 static void render_face(const struct indexed_render_call* data, uint32_t instance, uint32_t face,
@@ -129,18 +202,30 @@ static void render_face(const struct indexed_render_call* data, uint32_t instanc
     // todo: support geometry shaders?
 
     float point[2];
+    float weights[indices];
+
+    context.working_data = mem_alloc(data->pipeline->shader.working_size);
     for (uint32_t y = 0; y < data->framebuffer->height; y++) {
-        point[1] = -((float)y / (float)data->framebuffer->height * 2.f - 1.f);
+        point[1] = (float)y / (float)data->framebuffer->height * 2.f - 1.f;
 
         for (uint32_t x = 0; x < data->framebuffer->width; x++) {
             point[0] = (float)x / (float)data->framebuffer->width * 2.f - 1.f;
 
-            if (!face_contains_point(data->pipeline->winding == WINDING_ORDER_CW,
-                                     data->pipeline->cull_back, outputs, indices, point)) {
+            if (!face_contains_point(data->pipeline->winding == WINDING_ORDER_CW, outputs, indices,
+                                     point, weights)) {
                 continue;
             }
 
-            // todo: blend?
+            float inverse_depth = 0.f;
+            for (uint8_t i = 0; i < indices; i++) {
+                inverse_depth += weights[i] / outputs[i].position[2];
+            }
+
+            float depth = 1.f / inverse_depth;
+            // todo: check depth
+
+            shader_blend_parameters(&data->pipeline->shader, outputs, indices, weights, depth,
+                                    context.working_data);
 
             uint32_t color = data->pipeline->shader.fragment_stage(&context);
             for (uint32_t i = 0; i < data->framebuffer->attachment_count; i++) {
@@ -153,6 +238,7 @@ static void render_face(const struct indexed_render_call* data, uint32_t instanc
                 case IMAGE_FORMAT_COLOR:
                     value.color = color;
                     break;
+                    // todo: write depth
                 default:
                     memset(&value, 0, sizeof(image_pixel));
                     break;
@@ -165,6 +251,11 @@ static void render_face(const struct indexed_render_call* data, uint32_t instanc
                 image_set_pixel(attachment, x, y, &value);
             }
         }
+    }
+
+    mem_free(context.working_data);
+    for (uint8_t i = 0; i < indices; i++) {
+        mem_free(outputs[i].working_data);
     }
 }
 

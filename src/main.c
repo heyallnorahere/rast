@@ -6,12 +6,17 @@
 
 struct vertex {
     float x, y;
+    uint32_t color;
+};
+
+struct shader_working_data {
+    uint32_t color;
 };
 
 static const struct vertex s_vertices[] = {
-    { 0.f, 0.5f },
-    { -0.5f, -0.5f },
-    { 0.5f, -0.5f },
+    { 0.f, -0.5f, 0xFF0000FF },
+    { 0.5f, 0.5f, 0x0000FFFF },
+    { -0.5f, 0.5f, 0x00FF00FF },
 };
 
 static const uint16_t s_indices[] = { 0, 1, 2 };
@@ -19,13 +24,18 @@ static const uint16_t s_indices[] = { 0, 1, 2 };
 static void vertex_shader(const void* const* vertex_data, const struct shader_context* context,
                           float* position) {
     const struct vertex* data = vertex_data[0];
+    struct shader_working_data* result = context->working_data;
 
     position[0] = data->x;
     position[1] = data->y;
+    position[2] = 0.5f;
+
+    result->color = data->color;
 }
 
 static uint32_t fragment_shader(const struct shader_context* context) {
-    return 0xFF0000FF;
+    const struct shader_working_data* data = context->working_data;
+    return data->color;
 }
 
 int main(int argc, const char** argv) {
@@ -36,14 +46,21 @@ int main(int argc, const char** argv) {
     binding.stride = sizeof(struct vertex);
     binding.input_rate = VERTEX_INPUT_RATE_VERTEX;
 
+    struct blended_parameter color_parameter;
+    color_parameter.count = 4;
+    color_parameter.type = ELEMENT_TYPE_BYTE;
+    color_parameter.offset = 0;
+
     struct pipeline pipeline;
     memset(&pipeline, 0, sizeof(struct pipeline));
 
+    pipeline.shader.working_size = sizeof(struct shader_working_data);
     pipeline.shader.vertex_stage = vertex_shader;
     pipeline.shader.fragment_stage = fragment_shader;
+    pipeline.shader.inter_stage_parameter_count = 1;
+    pipeline.shader.inter_stage_parameters = &color_parameter;
     pipeline.binding_count = 1;
     pipeline.bindings = &binding;
-    pipeline.cull_back = true;
     pipeline.winding = WINDING_ORDER_CCW;
     pipeline.topology = TOPOLOGY_TYPE_TRIANGLES;
 

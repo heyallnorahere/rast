@@ -85,7 +85,6 @@ struct pipeline {
     const struct vertex_binding* bindings;
     uint32_t binding_count;
 
-    bool cull_back;
     winding_order winding;
     topology_type topology;
 };
