@@ -15,18 +15,23 @@ typedef struct thread_worker {
     void* user_data;
 
     gint stop;
+    bool active;
 } thread_worker_t;
 
 static gpointer thread_worker_entrypoint(gpointer user_data) {
     thread_worker_t* worker = user_data;
 
     while (true) {
+        worker->active = false;
+
         gint stop = g_atomic_int_get(&worker->stop);
         if (stop != 0) {
             break;
         }
 
         void* job = g_async_queue_pop(worker->jobs);
+
+        worker->active = true;
         worker->callback(worker->user_data, job);
     }
 
@@ -64,4 +69,18 @@ void thread_worker_stop(thread_worker_t* worker) {
     }
 
     mem_free(worker);
+}
+
+void thread_worker_wait_idle(const thread_worker_t* worker) {
+    while (true) {
+        gint pending_jobs = g_async_queue_length(worker->jobs);
+        bool working = worker->active || pending_jobs <= 0;
+
+        if (!working) {
+            break;
+        }
+
+        // 0.1ms
+        g_usleep(100);
+    }
 }
