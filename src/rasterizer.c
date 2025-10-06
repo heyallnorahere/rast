@@ -3,7 +3,7 @@
 #include "image.h"
 #include "mem.h"
 #include "vec.h"
-#include "mt_worker.h"
+#include "thread_worker.h"
 
 #include <glib.h>
 
@@ -219,11 +219,11 @@ static bool pre_fragment_tests(const struct pipeline* pipeline, struct framebuff
     return true;
 }
 
-struct pixel_context {
+struct render_context {
     const struct pipeline* pipeline;
     struct framebuffer* fb;
 
-    const struct vertex_output* outputs;
+    struct vertex_output* outputs;
     uint8_t vertices;
 
     uint32_t instance_id;
@@ -240,41 +240,40 @@ struct pixel_render_job {
     const struct pixel_context* context;
 };
 
-static void render_pixel(const struct pixel_data* data, const struct pixel_context* pixel_context) {
-    float weights[pixel_context->vertices];
+static void render_pixel(const struct pixel_data* data, const struct render_context* rc) {
+    float weights[rc->vertices];
 
-    if (!face_contains_point(pixel_context->pipeline->winding == WINDING_ORDER_CW,
-                             pixel_context->outputs, pixel_context->vertices, data->point,
-                             weights)) {
+    if (!face_contains_point(rc->pipeline->winding == WINDING_ORDER_CW, rc->outputs, rc->vertices,
+                             data->point, weights)) {
         return;
     }
 
     float inverse_depth = 0.f;
-    for (uint8_t i = 0; i < pixel_context->vertices; i++) {
-        inverse_depth += weights[i] / pixel_context->outputs[i].position[2];
+    for (uint8_t i = 0; i < rc->vertices; i++) {
+        inverse_depth += weights[i] / rc->outputs[i].position[2];
     }
 
     float depth = 1.f / inverse_depth;
-    if (!pre_fragment_tests(pixel_context->pipeline, pixel_context->fb, data->x, data->y, depth)) {
+    if (!pre_fragment_tests(rc->pipeline, rc->fb, data->x, data->y, depth)) {
         return;
     }
 
     struct shader_context context;
-    context.instance_index = pixel_context->instance_id;
-    context.uniform_data = pixel_context->uniform_data;
+    context.instance_index = rc->instance_id;
+    context.uniform_data = rc->uniform_data;
 
-    if (pixel_context->pipeline->shader.working_size > 0) {
-        context.working_data = mem_alloc(pixel_context->pipeline->shader.working_size);
+    if (rc->pipeline->shader.working_size > 0) {
+        context.working_data = mem_alloc(rc->pipeline->shader.working_size);
     } else {
         context.working_data = NULL;
     }
 
-    shader_blend_parameters(&pixel_context->pipeline->shader, pixel_context->outputs,
-                            pixel_context->vertices, weights, depth, context.working_data);
+    shader_blend_parameters(&rc->pipeline->shader, rc->outputs, rc->vertices, weights, depth,
+                            context.working_data);
 
-    uint32_t color = pixel_context->pipeline->shader.fragment_stage(&context);
-    for (uint32_t i = 0; i < pixel_context->fb->attachment_count; i++) {
-        image_t* attachment = pixel_context->fb->attachments[i];
+    uint32_t color = rc->pipeline->shader.fragment_stage(&context);
+    for (uint32_t i = 0; i < rc->fb->attachment_count; i++) {
+        image_t* attachment = rc->fb->attachments[i];
 
         bool discard = false;
         image_pixel value;
@@ -284,7 +283,7 @@ static void render_pixel(const struct pixel_data* data, const struct pixel_conte
             value.color = color;
             break;
         case IMAGE_FORMAT_DEPTH:
-            if (pixel_context->pipeline->depth.write) {
+            if (rc->pipeline->depth.write) {
                 value.depth = depth;
             } else {
                 discard = true;
@@ -306,8 +305,12 @@ static void render_pixel(const struct pixel_data* data, const struct pixel_conte
     mem_free(context.working_data);
 }
 
-static void render_pixel_job(void* user_data, uint32_t x, uint32_t y, uint32_t z) {
-    const struct pixel_context* context = user_data;
+static void render_pixel_job(void* user_data, void* job) {
+    const struct render_context* context = user_data;
+
+    size_t job_id = (size_t)job;
+    uint32_t x = job_id & 0xFFFFFFFF;
+    uint32_t y = (job_id >> 4) & 0xFFFFFFFF;
 
     struct pixel_data data;
     data.x = x;
@@ -319,36 +322,18 @@ static void render_pixel_job(void* user_data, uint32_t x, uint32_t y, uint32_t z
 }
 
 static void render_face(const struct indexed_render_call* data, uint32_t instance, uint32_t face,
-                        uint8_t indices) {
+                        struct render_context* rc) {
     struct shader_context context;
     context.instance_index = instance;
     context.uniform_data = data->uniform_data;
     context.working_data = NULL;
 
-    struct vertex_output outputs[indices];
-    process_face_vertices(data, instance, face, indices, &context, outputs);
+    process_face_vertices(data, instance, face, rc->vertices, &context, rc->outputs);
 
     // todo: support geometry shaders?
 
-    struct pixel_context pixel_context;
-    pixel_context.pipeline = data->pipeline;
-    pixel_context.fb = data->framebuffer;
-    pixel_context.instance_id = instance;
-    pixel_context.outputs = outputs;
-    pixel_context.vertices = indices;
-    pixel_context.uniform_data = data->uniform_data;
-
-    struct mt_kernel kernel;
-    kernel.width = data->framebuffer->width;
-    kernel.height = data->framebuffer->height;
-    kernel.depth = 1;
-    kernel.user_data = &pixel_context;
-    kernel.callback = render_pixel_job;
-
-    mt_worker_run_await(data->worker, &kernel);
-
-    for (uint8_t i = 0; i < indices; i++) {
-        mem_free(outputs[i].working_data);
+    for (uint8_t i = 0; i < rc->vertices; i++) {
+        mem_free(rc->outputs[i].working_data);
     }
 }
 
@@ -370,21 +355,33 @@ static uint8_t topology_get_vertex_count(topology_type topology) {
     }
 }
 
-static void render_instance(const struct indexed_render_call* data, uint32_t instance) {
-    // todo: add support for strips! only lists are supported
-    uint8_t vertices_per_face = topology_get_vertex_count(data->pipeline->topology);
-    uint32_t face_count = data->index_count / vertices_per_face;
-
+static void render_instance(const struct indexed_render_call* data, uint32_t instance,
+                            uint32_t face_count, struct render_context* rc,
+                            const thread_worker_t* worker) {
     // do we care if there are unused indices?
 
     for (uint32_t i = 0; i < face_count; i++) {
-        render_face(data, instance, i, vertices_per_face);
+        render_face(data, instance, i, rc);
     }
 }
 
 void render_indexed(const struct indexed_render_call* data) {
+    // todo: add support for strips! only lists are supported
+    uint8_t vertices_per_face = topology_get_vertex_count(data->pipeline->topology);
+    uint32_t face_count = data->index_count / vertices_per_face;
+
+    struct render_context rc;
+    rc.pipeline = data->pipeline;
+    rc.fb = data->framebuffer;
+    rc.outputs = mem_alloc(sizeof(struct vertex_output) * vertices_per_face);
+    rc.vertices = vertices_per_face;
+    rc.uniform_data = data->uniform_data;
+
+    thread_worker_t* worker = thread_worker_start(render_pixel_job, &rc);
     for (uint32_t i = 0; i < data->instance_count; i++) {
         uint32_t instance = data->first_instance + i;
-        render_instance(data, instance);
+        render_instance(data, instance, face_count, &rc, worker);
     }
+
+    thread_worker_stop(worker);
 }

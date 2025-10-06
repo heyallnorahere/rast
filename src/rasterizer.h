@@ -9,7 +9,7 @@
 typedef struct image image_t;
 
 // from mt_worker.h
-typedef struct mt_worker mt_worker_t;
+typedef struct thread_worker thread_worker_t;
 
 struct framebuffer {
     image_t* const* attachments;
@@ -104,8 +104,6 @@ struct indexed_render_call {
     struct framebuffer* framebuffer;
 
     void* uniform_data;
-
-    mt_worker_t* worker;
 };
 
 void framebuffer_clear(struct framebuffer* fb, const image_pixel* clear_values);

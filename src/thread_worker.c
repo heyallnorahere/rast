@@ -7,48 +7,32 @@
 #include <stdbool.h>
 
 typedef struct thread_worker {
-    GThread* thread;
-    GAsyncQueue* jobs;
+    GThreadPool* pool;
 
     thread_worker_func callback;
-    thread_worker_data_free data_free;
     void* user_data;
-
-    gint stop;
-    bool active;
 } thread_worker_t;
 
-static gpointer thread_worker_entrypoint(gpointer user_data) {
+static void thread_worker_entrypoint(gpointer user_data, gpointer job) {
     thread_worker_t* worker = user_data;
-
-    while (true) {
-        worker->active = false;
-
-        gint stop = g_atomic_int_get(&worker->stop);
-        if (stop != 0) {
-            break;
-        }
-
-        void* job = g_async_queue_pop(worker->jobs);
-
-        worker->active = true;
-        worker->callback(worker->user_data, job);
-    }
-
-    return NULL;
+    worker->callback(worker->user_data, job);
 }
 
-thread_worker_t* thread_worker_start(thread_worker_func callback,
-                                     thread_worker_data_free data_free) {
+thread_worker_t* thread_worker_start(thread_worker_func callback, void* user_data) {
     thread_worker_t* worker = mem_alloc(sizeof(thread_worker_t));
-    worker->jobs = g_async_queue_new();
     worker->callback = callback;
-    worker->data_free = data_free;
     worker->user_data = NULL;
-    worker->stop = 0;
 
-    // start the thread AFTER we set remaining context
-    worker->thread = g_thread_new("thread worker", NULL, worker);
+    GError* error = NULL;
+    guint num_processors = g_get_num_processors();
+
+    worker->pool =
+        g_thread_pool_new(thread_worker_entrypoint, worker, (gint)num_processors, FALSE, &error);
+
+    if (!worker->pool) {
+        mem_free(worker);
+        return NULL;
+    }
 
     return worker;
 }
@@ -58,29 +42,22 @@ void thread_worker_stop(thread_worker_t* worker) {
         return;
     }
 
-    g_atomic_int_exchange(&worker->stop, 1);
-    g_thread_join(worker->thread);
-
-    g_thread_unref(worker->thread);
-    g_async_queue_unref(worker->jobs);
-
-    if (worker->data_free) {
-        worker->data_free(worker->user_data);
-    }
-
+    g_thread_pool_free(worker->pool, TRUE, TRUE);
     mem_free(worker);
 }
 
 void thread_worker_wait_idle(const thread_worker_t* worker) {
     while (true) {
-        gint pending_jobs = g_async_queue_length(worker->jobs);
-        bool working = worker->active || pending_jobs <= 0;
-
-        if (!working) {
+        guint unprocessed = g_thread_pool_unprocessed(worker->pool);
+        if (unprocessed == 0) {
             break;
         }
 
         // 0.1ms
         g_usleep(100);
     }
+}
+
+void thread_worker_push_job(const thread_worker_t* worker, void* job) {
+    g_thread_pool_push(worker->pool, job, NULL);
 }
