@@ -3,6 +3,7 @@
 #include "image.h"
 #include "mem.h"
 #include "vec.h"
+#include "mt_worker.h"
 
 #include <glib.h>
 
@@ -234,6 +235,11 @@ struct pixel_data {
     float point[2];
 };
 
+struct pixel_render_job {
+    struct pixel_data data;
+    const struct pixel_context* context;
+};
+
 static void render_pixel(const struct pixel_data* data, const struct pixel_context* pixel_context) {
     float weights[pixel_context->vertices];
 
@@ -300,6 +306,18 @@ static void render_pixel(const struct pixel_data* data, const struct pixel_conte
     mem_free(context.working_data);
 }
 
+static void render_pixel_job(void* user_data, uint32_t x, uint32_t y, uint32_t z) {
+    const struct pixel_context* context = user_data;
+
+    struct pixel_data data;
+    data.x = x;
+    data.y = y;
+    data.point[0] = (float)x / (float)context->fb->width * 2.f - 1.f;
+    data.point[1] = (float)y / (float)context->fb->height * 2.f - 1.f;
+
+    render_pixel(&data, context);
+}
+
 static void render_face(const struct indexed_render_call* data, uint32_t instance, uint32_t face,
                         uint8_t indices) {
     struct shader_context context;
@@ -320,23 +338,15 @@ static void render_face(const struct indexed_render_call* data, uint32_t instanc
     pixel_context.vertices = indices;
     pixel_context.uniform_data = data->uniform_data;
 
-    float point[2];
-    for (uint32_t y = 0; y < data->framebuffer->height; y++) {
-        point[1] = (float)y / (float)data->framebuffer->height * 2.f - 1.f;
+    struct mt_kernel kernel;
+    kernel.width = data->framebuffer->width;
+    kernel.height = data->framebuffer->height;
+    kernel.depth = 1;
+    kernel.user_data = &pixel_context;
+    kernel.callback = render_pixel_job;
 
-        for (uint32_t x = 0; x < data->framebuffer->width; x++) {
-            point[0] = (float)x / (float)data->framebuffer->width * 2.f - 1.f;
+    mt_worker_run_await(data->worker, &kernel);
 
-            struct pixel_data pixel_data;
-            pixel_data.x = x;
-            pixel_data.y = y;
-            memcpy(pixel_data.point, point, 2 * sizeof(float));
-
-            render_pixel(&pixel_data, &pixel_context);
-        }
-    }
-
-    mem_free(context.working_data);
     for (uint8_t i = 0; i < indices; i++) {
         mem_free(outputs[i].working_data);
     }

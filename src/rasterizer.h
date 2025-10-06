@@ -8,6 +8,9 @@
 // from image.h
 typedef struct image image_t;
 
+// from mt_worker.h
+typedef struct mt_worker mt_worker_t;
+
 struct framebuffer {
     image_t* const* attachments;
     uint32_t attachment_count;
@@ -101,6 +104,8 @@ struct indexed_render_call {
     struct framebuffer* framebuffer;
 
     void* uniform_data;
+
+    mt_worker_t* worker;
 };
 
 void framebuffer_clear(struct framebuffer* fb, const image_pixel* clear_values);

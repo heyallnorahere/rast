@@ -5,6 +5,7 @@
 #include "image.h"
 #include "rasterizer.h"
 #include "vec.h"
+#include "mt_worker.h"
 
 struct vertex {
     float x, y;
@@ -154,6 +155,8 @@ int main(int argc, const char** argv) {
     call.pipeline = &pipeline;
     call.framebuffer = &fb;
 
+    call.worker = mt_worker_new();
+
     struct timespec t0, t1, delta;
     clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &t0);
 
@@ -198,5 +201,7 @@ int main(int argc, const char** argv) {
     }
 
     window_destroy(window);
+    mt_worker_free(call.worker);
+
     return success ? 0 : 1;
 }

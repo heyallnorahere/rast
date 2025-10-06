@@ -1,0 +1,21 @@
+#ifndef MT_WORKER_H_
+#define MT_WORKER_H_
+
+typedef struct thread_worker thread_worker_t;
+
+typedef void (*thread_worker_data_free)(void* user_data);
+typedef void (*thread_worker_func)(void* user_data, void* job);
+
+thread_worker_t* thread_worker_start(thread_worker_func callback,
+                                     thread_worker_data_free data_free);
+
+void thread_worker_stop(thread_worker_t* worker);
+
+void thread_worker_wait_idle(const thread_worker_t* worker);
+
+void thread_worker_set_user_data(thread_worker_t* worker, void* user_data);
+void* thread_worker_get_user_data(const thread_worker_t* worker);
+
+void thread_worker_push_job(const thread_worker_t* worker, void* job);
+
+#endif
