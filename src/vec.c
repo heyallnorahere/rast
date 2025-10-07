@@ -2,10 +2,10 @@
 
 #include <math.h>
 
+#include "mat.h"
+
 void vec_add(const float* lhs, const float* rhs, size_t count, float* result) {
-    for (size_t i = 0; i < count; i++) {
-        result[i] = lhs[i] + rhs[i];
-    }
+    mat_add(lhs, rhs, count, 1, result);
 }
 
 void vec_sub(const float* lhs, const float* rhs, size_t count, float* result) {
@@ -16,9 +16,7 @@ void vec_sub(const float* lhs, const float* rhs, size_t count, float* result) {
 }
 
 void vec_mult(const float* lhs, float rhs, size_t count, float* result) {
-    for (size_t i = 0; i < count; i++) {
-        result[i] = lhs[i] * rhs;
-    }
+    mat_mult(lhs, rhs, count, 1, result);
 }
 
 void vec_rot90(const float* src, float* dst, bool negative) {
@@ -27,11 +25,8 @@ void vec_rot90(const float* src, float* dst, bool negative) {
 }
 
 float vec_dot(const float* lhs, const float* rhs, size_t count) {
-    float result = 0.f;
-
-    for (size_t i = 0; i < count; i++) {
-        result += lhs[i] * rhs[i];
-    }
+    float result;
+    mat_dot(lhs, rhs, 1, count, 1, &result);
 
     return result;
 }
