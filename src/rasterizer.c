@@ -352,16 +352,19 @@ void render_indexed(struct indexed_render_call* data) {
 
     // do we care if there are unused indices?
 
+    struct vertex_output outputs[vertices_per_face];
+    void* working_data_block = mem_alloc(data->pipeline->shader.working_size * vertices_per_face);
+
+    for (uint8_t i = 0; i < vertices_per_face; i++) {
+        outputs[i].working_data = working_data_block + data->pipeline->shader.working_size * i;
+    }
+
     struct render_context rc;
     rc.pipeline = data->pipeline;
     rc.fb = data->framebuffer;
-    rc.outputs = mem_alloc(sizeof(struct vertex_output) * vertices_per_face);
+    rc.outputs = outputs;
     rc.vertices = vertices_per_face;
     rc.uniform_data = data->uniform_data;
-
-    for (uint8_t i = 0; i < vertices_per_face; i++) {
-        rc.outputs[i].working_data = mem_alloc(data->pipeline->shader.working_size);
-    }
 
     for (uint32_t i = 0; i < data->instance_count; i++) {
         rc.instance_id = data->first_instance + i;
@@ -371,9 +374,5 @@ void render_indexed(struct indexed_render_call* data) {
         }
     }
 
-    for (uint8_t i = 0; i < vertices_per_face; i++) {
-        mem_free(rc.outputs[i].working_data);
-    }
-
-    mem_free(rc.outputs);
+    mem_free(working_data_block);
 }
