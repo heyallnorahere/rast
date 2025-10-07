@@ -36,31 +36,17 @@ struct vertex_output {
     float position[4];
 };
 
-static void run_vertex_stage(const struct shader* shader, const void* const* vertex_data,
-                             struct shader_context* context, struct vertex_output* output) {
-    g_assert(!context->working_data);
-
-    memset(output->position, 0, 4 * sizeof(float));
-    output->position[3] = 1.f;
-
-    if (shader->working_size > 0) {
-        context->working_data = mem_alloc(shader->working_size);
-    }
-
-    shader->vertex_stage(vertex_data, context, output->position);
-    output->working_data = context->working_data;
-
-    context->working_data = NULL;
-}
-
 static void process_face_vertices(const struct indexed_render_call* data, uint32_t instance,
-                                  uint32_t face, uint8_t indices, struct shader_context* context,
-                                  struct vertex_output* outputs) {
+                                  uint32_t face, uint8_t indices, struct vertex_output* outputs) {
+    struct shader_context context;
+    context.instance_index = instance;
+    context.uniform_data = data->uniform_data;
+    context.working_data = NULL;
+
     const void* vertex_data[data->pipeline->binding_count];
     for (uint8_t i = 0; i < indices; i++) {
         uint32_t index_id = data->first_index + face * indices + i;
-        uint32_t vertex_id = data->vertex_offset + data->indices[index_id];
-        context->vertex_index = vertex_id;
+        context.vertex_index = data->vertex_offset + data->indices[index_id];
 
         for (uint32_t j = 0; j < data->pipeline->binding_count; j++) {
             const struct vertex_binding* binding = &data->pipeline->bindings[j];
@@ -68,7 +54,7 @@ static void process_face_vertices(const struct indexed_render_call* data, uint32
             uint32_t buffer_index;
             switch (binding->input_rate) {
             case VERTEX_INPUT_RATE_VERTEX:
-                buffer_index = vertex_id;
+                buffer_index = context.vertex_index;
                 break;
             case VERTEX_INPUT_RATE_INSTANCE:
                 buffer_index = instance;
@@ -81,7 +67,12 @@ static void process_face_vertices(const struct indexed_render_call* data, uint32
             vertex_data[j] = data->vertices[j] + offset;
         }
 
-        run_vertex_stage(&data->pipeline->shader, vertex_data, context, &outputs[i]);
+        struct vertex_output* current_output = outputs + i;
+        memset(current_output->position, 0, 4 * sizeof(float));
+        current_output->position[3] = 1.f;
+
+        context.working_data = current_output->working_data;
+        data->pipeline->shader.vertex_stage(vertex_data, &context, current_output->position);
     }
 }
 
@@ -240,11 +231,15 @@ struct pixel_render_job {
     const struct pixel_context* context;
 };
 
-static void render_pixel(const struct pixel_data* data, const struct render_context* rc) {
+static void render_pixel(uint32_t x, uint32_t y, const struct render_context* rc) {
     float weights[rc->vertices];
+    float point[2];
+
+    point[0] = (float)x / (float)rc->fb->width * 2.f - 1.f;
+    point[1] = (float)y / (float)rc->fb->height * 2.f - 1.f;
 
     if (!face_contains_point(rc->pipeline->winding == WINDING_ORDER_CW, rc->outputs, rc->vertices,
-                             data->point, weights)) {
+                             point, weights)) {
         return;
     }
 
@@ -254,7 +249,7 @@ static void render_pixel(const struct pixel_data* data, const struct render_cont
     }
 
     float depth = 1.f / inverse_depth;
-    if (!pre_fragment_tests(rc->pipeline, rc->fb, data->x, data->y, depth)) {
+    if (!pre_fragment_tests(rc->pipeline, rc->fb, x, y, depth)) {
         return;
     }
 
@@ -299,49 +294,44 @@ static void render_pixel(const struct pixel_data* data, const struct render_cont
             continue;
         }
 
-        image_set_pixel(attachment, data->x, data->y, &value);
+        image_set_pixel(attachment, x, y, &value);
     }
 
     mem_free(context.working_data);
 }
 
-static void render_pixel_job(void* user_data, void* job) {
+static void render_pixel_job(void* user_data, uint64_t job) {
     const struct render_context* context = user_data;
 
-    size_t job_id = (size_t)job;
-    uint32_t x = job_id & 0xFFFFFFFF;
-    uint32_t y = (job_id >> 4) & 0xFFFFFFFF;
+    uint32_t x = job & 0xFFFFFFFF;
+    uint32_t y = (job >> 32) & 0xFFFFFFFF;
 
-    struct pixel_data data;
-    data.x = x;
-    data.y = y;
-    data.point[0] = (float)x / (float)context->fb->width * 2.f - 1.f;
-    data.point[1] = (float)y / (float)context->fb->height * 2.f - 1.f;
-
-    render_pixel(&data, context);
+    render_pixel(x, y, context);
 }
 
-static void render_face(const struct indexed_render_call* data, uint32_t instance, uint32_t face,
+static void render_face(const struct indexed_render_call* data, uint32_t face,
                         struct render_context* rc) {
-    struct shader_context context;
-    context.instance_index = instance;
-    context.uniform_data = data->uniform_data;
-    context.working_data = NULL;
-
-    process_face_vertices(data, instance, face, rc->vertices, &context, rc->outputs);
+    process_face_vertices(data, rc->instance_id, face, rc->vertices, rc->outputs);
 
     // todo: support geometry shaders?
 
+    thread_worker_t* worker = NULL;
+    if (data->multithread) {
+        worker = thread_worker_start(render_pixel_job, rc);
+    }
+
     for (uint32_t y = 0; y < rc->fb->height; y++) {
         for (uint32_t x = 0; x < rc->fb->width; x++) {
-            size_t job_id = (size_t)y << 4 | (size_t)x;
-            render_pixel_job(rc, (void*)job_id);
+            if (worker) {
+                uint64_t job_id = (uint64_t)y << 32 | x;
+                thread_worker_push_job(worker, job_id);
+            } else {
+                render_pixel(x, y, rc);
+            }
         }
     }
 
-    for (uint8_t i = 0; i < rc->vertices; i++) {
-        mem_free(rc->outputs[i].working_data);
-    }
+    thread_worker_stop(worker);
 }
 
 static uint8_t topology_get_vertex_count(topology_type topology) {
@@ -355,7 +345,7 @@ static uint8_t topology_get_vertex_count(topology_type topology) {
     }
 }
 
-void render_indexed(const struct indexed_render_call* data) {
+void render_indexed(struct indexed_render_call* data) {
     // todo: add support for strips! only lists are supported
     uint8_t vertices_per_face = topology_get_vertex_count(data->pipeline->topology);
     uint32_t face_count = data->index_count / vertices_per_face;
@@ -369,14 +359,21 @@ void render_indexed(const struct indexed_render_call* data) {
     rc.vertices = vertices_per_face;
     rc.uniform_data = data->uniform_data;
 
-    thread_worker_t* worker = thread_worker_start(render_pixel_job, &rc);
-    for (uint32_t i = 0; i < data->instance_count; i++) {
-        uint32_t instance = data->first_instance + i;
+    for (uint8_t i = 0; i < vertices_per_face; i++) {
+        rc.outputs[i].working_data = mem_alloc(data->pipeline->shader.working_size);
+    }
 
-        for (uint32_t i = 0; i < face_count; i++) {
-            render_face(data, instance, i, &rc);
+    for (uint32_t i = 0; i < data->instance_count; i++) {
+        rc.instance_id = data->first_instance + i;
+
+        for (uint32_t j = 0; j < face_count; j++) {
+            render_face(data, j, &rc);
         }
     }
 
-    thread_worker_stop(worker);
+    for (uint8_t i = 0; i < vertices_per_face; i++) {
+        mem_free(rc.outputs[i].working_data);
+    }
+
+    mem_free(rc.outputs);
 }

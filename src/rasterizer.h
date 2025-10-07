@@ -8,7 +8,7 @@
 // from image.h
 typedef struct image image_t;
 
-// from mt_worker.h
+// from thread_worker.h
 typedef struct thread_worker thread_worker_t;
 
 struct framebuffer {
@@ -104,10 +104,11 @@ struct indexed_render_call {
     struct framebuffer* framebuffer;
 
     void* uniform_data;
+    bool multithread;
 };
 
 void framebuffer_clear(struct framebuffer* fb, const image_pixel* clear_values);
 
-void render_indexed(const struct indexed_render_call* data);
+void render_indexed(struct indexed_render_call* data);
 
 #endif
