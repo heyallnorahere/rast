@@ -92,6 +92,11 @@ struct pipeline {
     topology_type topology;
 };
 
+struct rect {
+    uint32_t x, y;
+    uint32_t width, height;
+};
+
 struct indexed_render_call {
     const void* const* vertices;
     const uint16_t* indices;
@@ -102,6 +107,8 @@ struct indexed_render_call {
 
     const struct pipeline* pipeline;
     struct framebuffer* framebuffer;
+
+    const struct rect* scissor_rect;
 
     void* uniform_data;
     bool multithread;

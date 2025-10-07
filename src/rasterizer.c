@@ -309,11 +309,6 @@ static void render_pixel_job(void* user_data, uint64_t job) {
     render_pixel(x, y, context);
 }
 
-struct rect {
-    int32_t x, y;
-    uint32_t width, height;
-};
-
 static uint32_t map_dimension(float value, uint32_t size) {
     if (value < -1.f) {
         return 0;
@@ -327,7 +322,8 @@ static uint32_t map_dimension(float value, uint32_t size) {
     return screen_space * size;
 }
 
-static void gen_bounding_box(const struct render_context* rc, struct rect* box) {
+static void gen_scissor_rect(const struct render_context* rc, struct rect* scissor,
+                             const struct rect* existing_scissor) {
     uint32_t x0 = UINT32_MAX;
     uint32_t y0 = UINT32_MAX;
 
@@ -357,10 +353,31 @@ static void gen_bounding_box(const struct render_context* rc, struct rect* box) 
         }
     }
 
-    box->x = x0;
-    box->y = y0;
-    box->width = x1 - x0;
-    box->height = y1 - y0;
+    if (existing_scissor) {
+        uint32_t x1_not = existing_scissor->x + existing_scissor->width;
+        uint32_t y1_not = existing_scissor->y + existing_scissor->height;
+
+        if (existing_scissor->x > x0) {
+            x0 = existing_scissor->x;
+        }
+
+        if (existing_scissor->y > y0) {
+            y0 = existing_scissor->y;
+        }
+
+        if (x1_not < x1) {
+            x1 = x1_not;
+        }
+
+        if (y1_not < y1) {
+            y1 = y1_not;
+        }
+    }
+
+    scissor->x = x0;
+    scissor->y = y0;
+    scissor->width = x1 - x0;
+    scissor->height = y1 - y0;
 }
 
 static void render_face(const struct indexed_render_call* data, uint32_t face,
@@ -374,14 +391,14 @@ static void render_face(const struct indexed_render_call* data, uint32_t face,
         worker = thread_worker_start(render_pixel_job, rc);
     }
 
-    struct rect bb;
-    gen_bounding_box(rc, &bb);
+    struct rect scissor;
+    gen_scissor_rect(rc, &scissor, data->scissor_rect);
 
-    for (uint32_t y_offset = 0; y_offset < bb.height; y_offset++) {
-        uint32_t y = bb.y + y_offset;
+    for (uint32_t y_offset = 0; y_offset < scissor.height; y_offset++) {
+        uint32_t y = scissor.y + y_offset;
 
-        for (uint32_t x_offset = 0; x_offset < bb.width; x_offset++) {
-            uint32_t x = bb.x + x_offset;
+        for (uint32_t x_offset = 0; x_offset < scissor.width; x_offset++) {
+            uint32_t x = scissor.x + x_offset;
 
             if (worker) {
                 uint64_t job_id = (uint64_t)y << 32 | x;
