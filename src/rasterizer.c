@@ -309,6 +309,60 @@ static void render_pixel_job(void* user_data, uint64_t job) {
     render_pixel(x, y, context);
 }
 
+struct rect {
+    int32_t x, y;
+    uint32_t width, height;
+};
+
+static uint32_t map_dimension(float value, uint32_t size) {
+    if (value < -1.f) {
+        return 0;
+    }
+
+    if (value > 1.f) {
+        return size;
+    }
+
+    float screen_space = (value + 1.f) / 2.f;
+    return screen_space * size;
+}
+
+static void gen_bounding_box(const struct render_context* rc, struct rect* box) {
+    uint32_t x0 = UINT32_MAX;
+    uint32_t y0 = UINT32_MAX;
+
+    uint32_t x1 = 0;
+    uint32_t y1 = 0;
+
+    for (uint8_t i = 0; i < rc->vertices; i++) {
+        const float* point = rc->outputs[i].position;
+
+        uint32_t x = map_dimension(point[0], rc->fb->width);
+        uint32_t y = map_dimension(point[1], rc->fb->height);
+
+        if (x < x0) {
+            x0 = x;
+        }
+
+        if (y < y0) {
+            y0 = y;
+        }
+
+        if (x > x1) {
+            x1 = x;
+        }
+
+        if (y > y1) {
+            y1 = y;
+        }
+    }
+
+    box->x = x0;
+    box->y = y0;
+    box->width = x1 - x0;
+    box->height = y1 - y0;
+}
+
 static void render_face(const struct indexed_render_call* data, uint32_t face,
                         struct render_context* rc) {
     process_face_vertices(data, rc->instance_id, face, rc->vertices, rc->outputs);
@@ -320,8 +374,15 @@ static void render_face(const struct indexed_render_call* data, uint32_t face,
         worker = thread_worker_start(render_pixel_job, rc);
     }
 
-    for (uint32_t y = 0; y < rc->fb->height; y++) {
-        for (uint32_t x = 0; x < rc->fb->width; x++) {
+    struct rect bb;
+    gen_bounding_box(rc, &bb);
+
+    for (uint32_t y_offset = 0; y_offset < bb.height; y_offset++) {
+        uint32_t y = bb.y + y_offset;
+
+        for (uint32_t x_offset = 0; x_offset < bb.width; x_offset++) {
+            uint32_t x = bb.x + x_offset;
+
             if (worker) {
                 uint64_t job_id = (uint64_t)y << 32 | x;
                 thread_worker_push_job(worker, job_id);
