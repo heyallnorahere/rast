@@ -332,17 +332,17 @@ static void render_face(const struct indexed_render_call* data, uint32_t instanc
 
     // todo: support geometry shaders?
 
+    for (uint32_t y = 0; y < rc->fb->height; y++) {
+        for (uint32_t x = 0; x < rc->fb->width; x++) {
+            size_t job_id = (size_t)y << 4 | (size_t)x;
+            render_pixel_job(rc, (void*)job_id);
+        }
+    }
+
     for (uint8_t i = 0; i < rc->vertices; i++) {
         mem_free(rc->outputs[i].working_data);
     }
 }
-
-static guint index_hasher(gconstpointer key) {
-    size_t index = (size_t)key;
-    return (guint)index;
-}
-
-static gboolean indices_equal(gconstpointer lhs, gconstpointer rhs) { return lhs == rhs; }
 
 static uint8_t topology_get_vertex_count(topology_type topology) {
     switch (topology) {
@@ -355,20 +355,12 @@ static uint8_t topology_get_vertex_count(topology_type topology) {
     }
 }
 
-static void render_instance(const struct indexed_render_call* data, uint32_t instance,
-                            uint32_t face_count, struct render_context* rc,
-                            const thread_worker_t* worker) {
-    // do we care if there are unused indices?
-
-    for (uint32_t i = 0; i < face_count; i++) {
-        render_face(data, instance, i, rc);
-    }
-}
-
 void render_indexed(const struct indexed_render_call* data) {
     // todo: add support for strips! only lists are supported
     uint8_t vertices_per_face = topology_get_vertex_count(data->pipeline->topology);
     uint32_t face_count = data->index_count / vertices_per_face;
+
+    // do we care if there are unused indices?
 
     struct render_context rc;
     rc.pipeline = data->pipeline;
@@ -380,7 +372,10 @@ void render_indexed(const struct indexed_render_call* data) {
     thread_worker_t* worker = thread_worker_start(render_pixel_job, &rc);
     for (uint32_t i = 0; i < data->instance_count; i++) {
         uint32_t instance = data->first_instance + i;
-        render_instance(data, instance, face_count, &rc, worker);
+
+        for (uint32_t i = 0; i < face_count; i++) {
+            render_face(data, instance, i, &rc);
+        }
     }
 
     thread_worker_stop(worker);
