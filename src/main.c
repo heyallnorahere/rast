@@ -153,6 +153,7 @@ int main(int argc, const char** argv) {
     call.instance_count = instance_count;
     call.pipeline = &pipeline;
     call.framebuffer = &fb;
+    call.scissor_rect = NULL;
     call.multithread = false;
 
     struct timespec t0, t1, delta;
