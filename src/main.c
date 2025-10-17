@@ -1,10 +1,16 @@
 #include <glib.h>
+
 #include <math.h>
 
-#include "window.h"
 #include "image.h"
 #include "rasterizer.h"
 #include "vec.h"
+#include "window.h"
+#include "mat.h"
+
+struct uniforms {
+    float view_projection[4 * 4];
+};
 
 struct vertex {
     float x, y;
@@ -59,7 +65,7 @@ static void time_diff(const struct timespec* t0, const struct timespec* t1,
     delta->tv_sec = t1->tv_sec - t0->tv_sec;
     delta->tv_nsec = t1->tv_nsec - t0->tv_nsec;
 
-    if (t1->tv_nsec < t0->tv_nsec) {
+    if (delta->tv_nsec < 0) {
         delta->tv_sec--;
         delta->tv_nsec += 1e9;
     }
@@ -156,12 +162,21 @@ int main(int argc, const char** argv) {
     call.scissor_rect = NULL;
     call.multithread = false;
 
+    struct uniforms uniforms;
+    call.uniform_data = &uniforms;
+
     struct timespec t0, t1, delta;
     clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &t0);
 
     image_pixel clear[2];
     clear[0].color = 0x787878FF;
     clear[1].depth = 1.f;
+
+    static const float up[3] = { 0.f, -1.f, 0.f };
+    static const float center[3] = { 0.f, 0.f, 0.f };
+
+    float camera_theta = 0.f;
+    float camera_distance = 0.5f;
 
     window = window_create("rast", 1600, 900);
     while (!window_is_close_requested(window)) {
@@ -188,6 +203,12 @@ int main(int argc, const char** argv) {
         fb.height = backbuffer->height;
 
         validate_depth_buffer(window, &attachments[1]);
+
+        static const float vfov = M_PI / 4.f;
+        float aspect = (float)backbuffer->width / (float)backbuffer->height;
+
+        float projection[16];
+        mat_perspective(projection, vfov, aspect, 0.1f, 100.f);
 
         framebuffer_clear(&fb, clear);
         render_indexed(&call);
