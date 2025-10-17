@@ -13,13 +13,11 @@ struct uniforms {
 };
 
 struct vertex {
-    float x, y;
+    float position[3];
 };
 
 struct instance {
-    float depth;
-    float scale;
-    float theta, radius;
+    float model[4 * 4];
     uint32_t color;
 };
 
@@ -28,9 +26,9 @@ struct shader_working_data {
 };
 
 static const struct vertex s_vertices[] = {
-    { 0.f, -0.5f },
-    { 0.5f, 0.5f },
-    { -0.5f, 0.5f },
+    { 0.f, -0.5f, 0.f },
+    { 0.5f, 0.5f, 0.f },
+    { -0.5f, 0.5f, 0.f },
 };
 
 static const uint16_t s_indices[] = { 0, 1, 2 };
@@ -39,17 +37,15 @@ static void vertex_shader(const void* const* vertex_data, const struct shader_co
                           float* position) {
     const struct vertex* vertex = vertex_data[0];
     const struct instance* instance = vertex_data[1];
+    const struct uniforms* uniforms = context->uniform_data;
 
-    float model_space[2], unit_radial[2], radial[2];
+    float vertex_pos[4];
+    memcpy(vertex_pos, vertex->position, 3 * sizeof(float));
+    vertex_pos[3] = 1.f;
 
-    unit_radial[0] = cosf(instance->theta);
-    unit_radial[1] = sinf(instance->theta);
-
-    vec_mult(unit_radial, instance->radius, 2, radial);
-    vec_mult(&vertex->x, instance->scale, 2, model_space);
-    vec_add(model_space, radial, 2, position);
-
-    position[2] = instance->depth;
+    float world_position[4];
+    mat_dot(instance->model, vertex_pos, 4, 4, 1, world_position);
+    mat_dot(uniforms->view_projection, world_position, 4, 4, 1, position);
 
     struct shader_working_data* result = context->working_data;
     result->color = instance->color;
@@ -134,8 +130,8 @@ int main(int argc, const char** argv) {
     struct indexed_render_call call;
     memset(&call, 0, sizeof(struct indexed_render_call));
 
-    struct instance instances[6];
-    uint32_t instance_count = sizeof(instances) / sizeof(struct instance);
+    static const uint32_t instance_count = 6;
+    struct instance instances[instance_count];
 
     for (uint32_t i = 0; i < instance_count; i++) {
         struct instance* instance = &instances[i];
@@ -145,10 +141,6 @@ int main(int argc, const char** argv) {
             uint8_t channel = rand() & 0xFF;
             instance->color |= channel << ((j + 1) * 8);
         }
-
-        instance->scale = 0.25f;
-        instance->radius = 0.125f;
-        instance->theta = (float)M_PI * 2.f * (float)i / (float)instance_count;
     }
 
     const void* vertices[] = { s_vertices, instances };
@@ -168,15 +160,18 @@ int main(int argc, const char** argv) {
     struct timespec t0, t1, delta;
     clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &t0);
 
+    float total_seconds = 0.f;
+
     image_pixel clear[2];
     clear[0].color = 0x787878FF;
     clear[1].depth = 1.f;
 
-    static const float up[3] = { 0.f, -1.f, 0.f };
+    static const float up[3] = { 0.f, 1.f, 0.f };
     static const float center[3] = { 0.f, 0.f, 0.f };
 
+    float camera_position[3];
     float camera_theta = 0.f;
-    float camera_distance = 0.5f;
+    float camera_distance = 2.f;
 
     window = window_create("rast", 1600, 900);
     while (!window_is_close_requested(window)) {
@@ -184,12 +179,58 @@ int main(int argc, const char** argv) {
         time_diff(&t0, &t1, &delta);
         memcpy(&t0, &t1, sizeof(struct timespec));
 
-        float t = (float)delta.tv_sec + (float)delta.tv_nsec / 1e+9f;
+        float delta_seconds = (float)delta.tv_sec + (float)delta.tv_nsec / 1e+9f;
+        total_seconds += delta_seconds;
+
         for (uint32_t i = 0; i < instance_count; i++) {
             struct instance* instance = &instances[i];
+            mat_identity(instance->model, 4);
 
-            instance->theta += t;
-            instance->depth = sinf(instance->theta) * 0.5f + 0.5f;
+            // scale
+            float scale[4 * 4];
+            mat_identity(scale, 4);
+
+            for (uint32_t j = 0; j < 3; j++) {
+                // scale[j, j]
+                scale[j * 5] *= 0.25f;
+            }
+
+            float theta = (float)M_PI * 2.f * (float)i / (float)instance_count;
+
+            // rotation
+            float rotation[4 * 4];
+            mat_identity(rotation, 4);
+
+            // rotating around y
+            // this means that i is now i'cos(theta) - k'sin(theta)
+            // accordingly, k is now i'sin(theta) + k'cos(theta)
+
+            float cos_theta = cosf(theta);
+            float sin_theta = sinf(theta);
+
+            // rotation[0, 0]
+            rotation[0] = cos_theta;
+
+            // rotation[0, 2]
+            rotation[2] = -sin_theta;
+
+            // rotation[2, 0]
+            rotation[8] = sin_theta;
+
+            // rotation[2, 2]
+            rotation[10] = cos_theta;
+
+            // translation
+            float translation[4 * 4];
+            mat_identity(translation, 4);
+
+            // negative z
+            // mat[2, 3]
+            translation[11] = 0.5f;
+
+            float displacement[4 * 4];
+            mat_dot(rotation, translation, 4, 4, 4, displacement);
+            mat_dot(scale, displacement, 4, 4, 4, instance->model);
         }
 
         image_t* backbuffer = window_get_backbuffer(window);
@@ -207,8 +248,24 @@ int main(int argc, const char** argv) {
         static const float vfov = M_PI / 4.f;
         float aspect = (float)backbuffer->width / (float)backbuffer->height;
 
-        float projection[16];
+        float projection[4 * 4];
         mat_perspective(projection, vfov, aspect, 0.1f, 100.f);
+
+        float cos_theta = cosf(camera_theta);
+        float sin_theta = sinf(camera_theta);
+
+        float phi = cos_theta * (float)M_PI / 4.f;
+        float cos_phi = cosf(phi);
+        float sin_phi = sinf(phi);
+
+        camera_theta += delta_seconds;
+        camera_position[0] = cos_theta * cos_phi * camera_distance;
+        camera_position[1] = sin_phi * camera_distance;
+        camera_position[2] = sin_theta * cos_phi * camera_distance;
+
+        float view[4 * 4];
+        mat_look_at(view, camera_position, center, up);
+        mat_dot(projection, view, 4, 4, 4, uniforms.view_projection);
 
         framebuffer_clear(&fb, clear);
         render_indexed(&call);
@@ -222,6 +279,5 @@ int main(int argc, const char** argv) {
     }
 
     window_destroy(window);
-
     return success ? 0 : 1;
 }

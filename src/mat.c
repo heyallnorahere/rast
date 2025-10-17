@@ -10,7 +10,9 @@ void mat_identity(float* mat, uint32_t size) {
     memset(mat, 0, size * size * sizeof(float));
 
     for (uint32_t i = 0; i < size; i++) {
+        // mat[i, i]
         uint32_t index = i * (size + 1);
+
         mat[index] = 1.f;
     }
 }
