@@ -59,6 +59,8 @@ void mat_dot(const float* lhs, const float* rhs, uint32_t m, uint32_t x, uint32_
 }
 
 // right-handed, zero-to-one depth
+// however, GLM IS COLUMN MAJOR
+// our matrices are ROW MAJOR
 // https://github.com/g-truc/glm/blob/master/glm/ext/matrix_clip_space.inl#L233
 
 void mat_perspective(float* mat, float vfov, float aspect, float near, float far) {
@@ -76,14 +78,16 @@ void mat_perspective(float* mat, float vfov, float aspect, float near, float far
     mat[10] = far / (near - far);
 
     // mat[2, 3]
-    mat[11] = -1.f;
+    mat[11] = -(far * near) / (far - near);
 
-    // mat[3, 3]
-    mat[15] = -(far * near) / (far - near);
+    // mat[3, 2]
+    mat[14] = -1.f;
 }
 
-// https://github.com/g-truc/glm/blob/5913e3f486aa5b69ff1866fafd92485c8a90a415/glm/ext/matrix_transform.inl#L153
+// https://github.com/g-truc/glm/blob/master/glm/ext/matrix_transform.inl#L153
 void mat_look_at(float* mat, const float* eye, const float* center, const float* up) {
+    mat_identity(mat, 4);
+
     float f_u[3];
     vec_sub(center, eye, 3, f_u);
 
@@ -99,21 +103,21 @@ void mat_look_at(float* mat, const float* eye, const float* center, const float*
     float u[3];
     vec_cross(s, f, u);
 
-    mat_identity(mat, 4);
-    for (uint32_t i = 0; i < 3; i++) {
-        uint32_t offset = i * 4;
+    // row 1 is side
+    memcpy(mat, s, 3 * sizeof(float));
 
-        mat[offset] = s[i];
-        mat[offset + 1] = u[i];
-        mat[offset + 2] = -f[i];
-    }
+    // row 2 is up
+    memcpy(mat + 4, u, 3 * sizeof(float));
 
-    // mat[3, 0]
-    mat[12] = -vec_dot(s, eye, 3);
+    // row 3 is inverted front
+    vec_mult(f, -1.f, 3, mat + 8);
 
-    // mat[3, 1]
-    mat[13] = -vec_dot(u, eye, 3);
+    // mat[0, 3]
+    mat[3] = -vec_dot(s, eye, 3);
 
-    // mat[3, 2]
-    mat[14] = vec_dot(f, eye, 3);
+    // mat[1, 3]
+    mat[7] = -vec_dot(u, eye, 3);
+
+    // mat[2, 3]
+    mat[11] = vec_dot(f, eye, 3);
 }
