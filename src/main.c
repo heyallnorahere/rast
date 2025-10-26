@@ -226,7 +226,7 @@ int main(int argc, const char** argv) {
 
             // negative z
             // mat[2, 3]
-            translation[11] = 0.5f;
+            translation[11] = -0.5f;
 
             float displacement[4 * 4];
             mat_dot(rotation, translation, 4, 4, 4, displacement);

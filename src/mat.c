@@ -61,10 +61,19 @@ void mat_dot(const float* lhs, const float* rhs, uint32_t m, uint32_t x, uint32_
 // right-handed, zero-to-one depth
 // however, GLM IS COLUMN MAJOR
 // our matrices are ROW MAJOR
-// https://github.com/g-truc/glm/blob/master/glm/ext/matrix_clip_space.inl#L233
 
+// https://github.com/g-truc/glm/blob/master/glm/ext/matrix_clip_space.inl#L233
 void mat_perspective(float* mat, float vfov, float aspect, float near, float far) {
     memset(mat, 0, 4 * 4 * sizeof(float));
+
+    /*
+        mat<4, 4, T, defaultp> Result(static_cast<T>(0));
+        Result[0][0] = static_cast<T>(1) / (aspect * tanHalfFovy);
+        Result[1][1] = static_cast<T>(1) / (tanHalfFovy);
+        Result[2][2] = zFar / (zNear - zFar);
+        Result[2][3] = - static_cast<T>(1);
+        Result[3][2] = -(zFar * zNear) / (zFar - zNear);
+    */
 
     float tan_half_vfov = tan(vfov / 2.f);
 
