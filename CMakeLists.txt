@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.21)
 
-project(rast LANGUAGES C)
+project(rast LANGUAGES C CXX)
+
+add_subdirectory("vendor")
 
 set(RAST_SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src")
 file(
@@ -17,6 +19,7 @@ find_package(SDL3 REQUIRED)
 target_link_libraries(
     rast PRIVATE
     m
+    cimgui
     SDL3::SDL3
     PkgConfig::glib2
 )
