@@ -8,6 +8,12 @@
 
 #include <glib.h>
 
+#define CIMGUI_DEFINE_ENUMS_AND_STRUCTS
+#include <cimgui.h>
+
+#define CIMGUI_USE_SDL3
+#include <cimgui_impl.h>
+
 typedef struct video_data {
     uint32_t references;
 
@@ -21,6 +27,8 @@ struct window {
     bool close_requested;
 
     image_t* backbuffer;
+
+    ImGuiContext* imgui;
 };
 
 static guint window_hash_id(gconstpointer key) {
@@ -85,6 +93,7 @@ window_t* window_create(const char* title, uint32_t width, uint32_t height) {
     window->window = sdl_window;
     window->close_requested = false;
     window->backbuffer = NULL;
+    window->imgui = NULL;
 
     size_t id = (size_t)SDL_GetWindowID(sdl_window);
     g_hash_table_insert(s_video_data->windows, (gpointer)id, window);
@@ -97,6 +106,11 @@ void window_destroy(window_t* window) {
         return;
     }
 
+    if (window->imgui) {
+        igSetCurrentContext(window->imgui);
+        ImGui_ImplSDL3_Shutdown();
+    }
+
     size_t id = (size_t)SDL_GetWindowID(window->window);
     g_hash_table_remove(s_video_data->windows, (gconstpointer)id);
 
@@ -106,6 +120,24 @@ void window_destroy(window_t* window) {
     mem_free(window);
 
     video_remove_ref();
+}
+
+bool window_init_imgui(window_t *window) {
+    if (window->imgui) {
+        return false;
+    }
+
+    ImGuiContext* context = igGetCurrentContext();
+    if (!context) {
+        return false;
+    }
+
+    if (!ImGui_ImplSDL3_InitForOther(window->window)) {
+        return false;
+    }
+
+    window->imgui = context;
+    return true;
 }
 
 bool window_get_framebuffer_size(window_t* window, uint32_t* width, uint32_t* height) {
@@ -143,10 +175,28 @@ static void video_sdl_quit() {
     g_list_free(windows);
 }
 
+static void window_process_imgui_events(const SDL_Event* event) {
+    GList* windows = g_hash_table_get_values(s_video_data->windows);
+
+    for (GList* node = windows; node != NULL; node = g_list_next(node)) {
+        window_t* window = node->data;
+        if (!window->imgui) {
+            continue;
+        }
+
+        igSetCurrentContext(window->imgui);
+        ImGui_ImplSDL3_ProcessEvent(event);
+    }
+
+    g_list_free(windows);
+}
+
 void window_poll() {
     SDL_Event event;
 
     while (SDL_PollEvent(&event)) {
+        window_process_imgui_events(&event);
+
         switch (event.type) {
         case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
             window_close_requested(&event.window);

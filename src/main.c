@@ -8,6 +8,8 @@
 #include "window.h"
 #include "mat.h"
 
+#include "imgui.h"
+
 struct uniforms {
     float view_projection[4 * 4];
 };
@@ -174,6 +176,11 @@ int main(int argc, const char** argv) {
     float camera_distance = 2.f;
 
     window = window_create("rast", 1600, 900);
+
+    igCreateContext(NULL);
+    window_init_imgui(window);
+    imgui_init_renderer();
+
     while (!window_is_close_requested(window)) {
         clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &t1);
         time_diff(&t0, &t1, &delta);
@@ -278,6 +285,9 @@ int main(int argc, const char** argv) {
         window_poll();
     }
 
+    imgui_shutdown_renderer();
     window_destroy(window);
+    igDestroyContext(NULL);
+
     return success ? 0 : 1;
 }

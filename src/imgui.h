@@ -4,11 +4,16 @@
 #define CIMGUI_DEFINE_ENUMS_AND_STRUCTS
 #include <cimgui.h>
 
-typedef struct imgui imgui_t;
+#include <stdbool.h>
 
-imgui_t* imgui_init();
-void imgui_destroy(imgui_t* instance);
+// from rasterizer.h
+struct framebuffer;
 
-void imgui_make_current(const imgui_t* instance);
+void imgui_set_allocators();
+
+void imgui_init_renderer();
+void imgui_shutdown_renderer();
+
+void imgui_render(ImDrawData* data, struct framebuffer* fb);
 
 #endif
