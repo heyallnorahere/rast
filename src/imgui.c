@@ -7,6 +7,8 @@
 #include <string.h>
 
 struct imgui_renderer_data {
+    rasterizer_t* rast;
+
     struct pipeline pipeline;
     struct vertex_binding binding;
     struct blended_parameter blended_params[2];
@@ -66,8 +68,9 @@ static void imgui_mem_free(void* block, void* user_data) { return mem_free(block
 
 void imgui_set_allocators() { igSetAllocatorFunctions(imgui_mem_alloc, imgui_mem_free, NULL); }
 
-void imgui_init_renderer() {
+void imgui_init_renderer(rasterizer_t* rast) {
     struct imgui_renderer_data* data = mem_alloc(sizeof(struct imgui_renderer_data));
+    data->rast = rast;
 
     ImGuiIO* io = igGetIO_Nil();
     io->BackendRendererName = "rast";
@@ -152,7 +155,6 @@ void imgui_render(ImDrawData* data, struct framebuffer* fb) {
     memset(&call, 0, sizeof(struct indexed_render_call));
     call.pipeline = &renderer_data->pipeline;
     call.framebuffer = fb;
-    call.multithread = false;
     call.first_instance = 0;
     call.instance_count = 1;
     call.uniform_data = &uniforms;
@@ -193,7 +195,7 @@ void imgui_render(ImDrawData* data, struct framebuffer* fb) {
 
             // todo: pass texture data!
             
-            render_indexed(&call);
+            render_indexed(renderer_data->rast, &call);
         }
     }
 }

@@ -111,11 +111,15 @@ struct indexed_render_call {
     const struct rect* scissor_rect;
 
     void* uniform_data;
-    bool multithread;
 };
+
+typedef struct rasterizer rasterizer_t;
+
+rasterizer_t* rasterizer_create();
+void rasterizer_destroy(rasterizer_t* rast);
 
 void framebuffer_clear(struct framebuffer* fb, const image_pixel* clear_values);
 
-void render_indexed(struct indexed_render_call* data);
+void render_indexed(rasterizer_t* rast, struct indexed_render_call* data);
 
 #endif

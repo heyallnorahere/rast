@@ -93,6 +93,7 @@ int main(int argc, const char** argv) {
     srand(time(NULL));
     imgui_set_allocators();
 
+    rasterizer_t* rast = NULL;
     window_t* window = NULL;
     image_t* depth_buffer = NULL;
     bool success = true;
@@ -155,7 +156,6 @@ int main(int argc, const char** argv) {
     call.pipeline = &pipeline;
     call.framebuffer = &fb;
     call.scissor_rect = NULL;
-    call.multithread = false;
 
     struct uniforms uniforms;
     call.uniform_data = &uniforms;
@@ -177,10 +177,11 @@ int main(int argc, const char** argv) {
     float camera_distance = 2.f;
 
     window = window_create("rast", 1600, 900);
+    rast = rasterizer_create();
 
     igCreateContext(NULL);
     window_init_imgui(window);
-    imgui_init_renderer();
+    imgui_init_renderer(rast);
 
     while (!window_is_close_requested(window)) {
         window_poll();
@@ -284,7 +285,7 @@ int main(int argc, const char** argv) {
         mat_dot(projection, view, 4, 4, 4, uniforms.view_projection);
 
         framebuffer_clear(&fb, clear);
-        render_indexed(&call);
+        render_indexed(rast, &call);
 
         igRender();
         imgui_render(igGetDrawData(), &fb);
@@ -298,6 +299,7 @@ int main(int argc, const char** argv) {
     imgui_shutdown_renderer();
     window_destroy(window);
     igDestroyContext(NULL);
+    rasterizer_destroy(rast);
 
     return success ? 0 : 1;
 }

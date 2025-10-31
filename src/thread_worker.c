@@ -45,6 +45,10 @@ void thread_worker_stop(thread_worker_t* worker) {
     mem_free(worker);
 }
 
+uint32_t thread_worker_get_thread_count(const thread_worker_t* worker) {
+    return g_thread_pool_get_max_threads(worker->pool);
+}
+
 void thread_worker_set_data(thread_worker_t* worker, void* user_data) {
     worker->user_data = user_data;
 }

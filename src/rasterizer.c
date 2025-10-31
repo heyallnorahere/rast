@@ -4,8 +4,13 @@
 #include "mem.h"
 #include "vec.h"
 #include "thread_worker.h"
+#include "semaphore.h"
 
 #include <glib.h>
+
+struct rasterizer {
+    thread_worker_t* worker;
+};
 
 static void image_set_pixel(image_t* image, uint32_t x, uint32_t y, const image_pixel* value) {
     uint32_t index = image_get_pixel_index(image, x, y);
@@ -219,6 +224,8 @@ struct render_context {
 
     uint32_t instance_id;
     void* uniform_data;
+
+    semaphore_t* semaphore;
 };
 
 struct pixel_data {
@@ -307,6 +314,23 @@ static void render_pixel_job(void* user_data, uint64_t job) {
     uint32_t y = (job >> 32) & 0xFFFFFFFF;
 
     render_pixel(x, y, context);
+    semaphore_signal(context->semaphore);
+}
+
+rasterizer_t* rasterizer_create() {
+    rasterizer_t* rast = mem_alloc(sizeof(rasterizer_t));
+    rast->worker = thread_worker_start(render_pixel_job, NULL);
+
+    return rast;
+}
+
+void rasterizer_destroy(rasterizer_t* rast) {
+    if (!rast) {
+        return;
+    }
+
+    thread_worker_stop(rast->worker);
+    mem_free(rast);
 }
 
 static uint32_t map_dimension(float value, uint32_t size) {
@@ -380,36 +404,33 @@ static void gen_scissor_rect(const struct render_context* rc, struct rect* sciss
     scissor->height = y1 - y0;
 }
 
-static void render_face(const struct indexed_render_call* data, uint32_t face,
+static void render_face(rasterizer_t* rast, const struct indexed_render_call* data, uint32_t face,
                         struct render_context* rc) {
     process_face_vertices(data, rc->instance_id, face, rc->vertices, rc->outputs);
 
     // todo: support geometry shaders?
 
-    thread_worker_t* worker = NULL;
-    if (data->multithread) {
-        worker = thread_worker_start(render_pixel_job, rc);
-    }
-
     struct rect scissor;
     gen_scissor_rect(rc, &scissor, data->scissor_rect);
 
+    uint64_t total_jobs = 0;
     for (uint32_t y_offset = 0; y_offset < scissor.height; y_offset++) {
         uint32_t y = scissor.y + y_offset;
 
         for (uint32_t x_offset = 0; x_offset < scissor.width; x_offset++) {
             uint32_t x = scissor.x + x_offset;
 
-            if (worker) {
-                uint64_t job_id = (uint64_t)y << 32 | x;
-                thread_worker_push_job(worker, job_id);
-            } else {
-                render_pixel(x, y, rc);
-            }
+            uint64_t job_id = (uint64_t)y << 32 | x;
+            thread_worker_push_job(rast->worker, job_id);
+
+            total_jobs++;
         }
     }
 
-    thread_worker_stop(worker);
+    // this is slow! figure out how to do it faster
+    for (uint64_t i = 0; i < total_jobs; i++) {
+        semaphore_wait(rc->semaphore);
+    }
 }
 
 static uint8_t topology_get_vertex_count(topology_type topology) {
@@ -423,7 +444,7 @@ static uint8_t topology_get_vertex_count(topology_type topology) {
     }
 }
 
-void render_indexed(struct indexed_render_call* data) {
+void render_indexed(rasterizer_t* rast, struct indexed_render_call* data) {
     // todo: add support for strips! only lists are supported
     uint8_t vertices_per_face = topology_get_vertex_count(data->pipeline->topology);
     uint32_t face_count = data->index_count / vertices_per_face;
@@ -443,14 +464,17 @@ void render_indexed(struct indexed_render_call* data) {
     rc.outputs = outputs;
     rc.vertices = vertices_per_face;
     rc.uniform_data = data->uniform_data;
+    rc.semaphore = semaphore_create();
 
+    thread_worker_set_data(rast->worker, &rc);
     for (uint32_t i = 0; i < data->instance_count; i++) {
         rc.instance_id = data->first_instance + i;
 
         for (uint32_t j = 0; j < face_count; j++) {
-            render_face(data, j, &rc);
+            render_face(rast, data, j, &rc);
         }
     }
 
+    semaphore_destroy(rc.semaphore);
     mem_free(working_data_block);
 }
