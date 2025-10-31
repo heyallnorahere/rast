@@ -21,13 +21,28 @@ struct imgui_uniform_data {
     float projection[4 * 4];
 };
 
+static uint32_t convert_imgui_color(uint32_t src) {
+    // imgui colors are stored in reverse of ours
+    
+    uint32_t dst = 0;
+    for (uint32_t dst_index = 0; dst_index < 4; dst_index++) {
+        uint32_t src_index = 4 - (dst_index + 1);
+
+        uint8_t byte = (src >> (src_index * 8)) & 0xFF;
+        dst |= byte << (dst_index * 8);
+    }
+
+    return dst;
+}
+
 static void imgui_vertex_shader(const void* const* bindings, const struct shader_context* context,
                                 float* position) {
     const struct ImDrawVert* vertex = bindings[0];
     const struct imgui_uniform_data* render_data = context->uniform_data;
 
     float input_pos[4];
-    memcpy(input_pos, &vertex->pos, 2 * sizeof(float));
+    input_pos[0] = vertex->pos.x;
+    input_pos[1] = vertex->pos.y;
     input_pos[2] = 0.f;
     input_pos[3] = 1.f;
 
@@ -35,7 +50,7 @@ static void imgui_vertex_shader(const void* const* bindings, const struct shader
 
     struct imgui_fragment_data* frag_data = context->working_data;
     memcpy(frag_data->uv, &vertex->uv, 2 * sizeof(float));
-    frag_data->color = vertex->col;
+    frag_data->color = convert_imgui_color(vertex->col);
 }
 
 static uint32_t imgui_fragment_shader(const struct shader_context* context) {
@@ -101,6 +116,7 @@ void imgui_shutdown_renderer() {
     // todo: if we use viewports, destroy resources? idk
 
     mem_free(data);
+    io->BackendRendererUserData = NULL;
 }
 
 void imgui_render(ImDrawData* data, struct framebuffer* fb) {
@@ -133,6 +149,7 @@ void imgui_render(ImDrawData* data, struct framebuffer* fb) {
     struct indexed_render_call call;
     struct rect scissor;
 
+    memset(&call, 0, sizeof(struct indexed_render_call));
     call.pipeline = &renderer_data->pipeline;
     call.framebuffer = fb;
     call.multithread = false;
@@ -140,6 +157,9 @@ void imgui_render(ImDrawData* data, struct framebuffer* fb) {
     call.instance_count = 1;
     call.uniform_data = &uniforms;
     call.scissor_rect = &scissor;
+
+    ImVec2 scissor_offset = data->DisplayPos;
+    ImVec2 scissor_scale = data->FramebufferScale;
 
     for (int i = 0; i < data->CmdListsCount; i++) {
         ImDrawList* draw_list = data->CmdLists.Data[i];
@@ -158,7 +178,18 @@ void imgui_render(ImDrawData* data, struct framebuffer* fb) {
 
             call.vertex_offset = cmd->VtxOffset;
             call.first_index = cmd->IdxOffset;
-            call.instance_count = cmd->ElemCount;
+            call.index_count = cmd->ElemCount;
+
+            float scissor_min[2], scissor_max[2];
+            scissor_min[0] = (cmd->ClipRect.x - scissor_offset.x) * scissor_scale.x;
+            scissor_min[1] = (cmd->ClipRect.y - scissor_offset.y) * scissor_scale.y;
+            scissor_max[0] = (cmd->ClipRect.z - scissor_offset.x) * scissor_scale.x;
+            scissor_max[1] = (cmd->ClipRect.w - scissor_offset.y) * scissor_scale.y;
+
+            scissor.x = (int32_t)scissor_min[0];
+            scissor.y = (int32_t)scissor_min[1];
+            scissor.width = (uint32_t)(scissor_max[0] - scissor_min[0]);
+            scissor.height = (uint32_t)(scissor_max[1] - scissor_min[1]);
 
             // todo: pass texture data!
             

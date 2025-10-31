@@ -91,6 +91,7 @@ static void validate_depth_buffer(window_t* window, image_t** buffer) {
 
 int main(int argc, const char** argv) {
     srand(time(NULL));
+    imgui_set_allocators();
 
     window_t* window = NULL;
     image_t* depth_buffer = NULL;
@@ -182,6 +183,14 @@ int main(int argc, const char** argv) {
     imgui_init_renderer();
 
     while (!window_is_close_requested(window)) {
+        window_poll();
+        igNewFrame();
+
+        static bool draw_demo = true;
+        if (draw_demo) {
+            igShowDemoWindow(&draw_demo);
+        }
+
         clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &t1);
         time_diff(&t0, &t1, &delta);
         memcpy(&t0, &t1, sizeof(struct timespec));
@@ -277,12 +286,13 @@ int main(int argc, const char** argv) {
         framebuffer_clear(&fb, clear);
         render_indexed(&call);
 
+        igRender();
+        imgui_render(igGetDrawData(), &fb);
+
         if (!window_swap_buffers(window)) {
             success = false;
             break;
         }
-
-        window_poll();
     }
 
     imgui_shutdown_renderer();

@@ -10,8 +10,6 @@
 
 #define CIMGUI_DEFINE_ENUMS_AND_STRUCTS
 #include <cimgui.h>
-
-#define CIMGUI_USE_SDL3
 #include <cimgui_impl.h>
 
 typedef struct video_data {
@@ -122,7 +120,7 @@ void window_destroy(window_t* window) {
     video_remove_ref();
 }
 
-bool window_init_imgui(window_t *window) {
+bool window_init_imgui(window_t* window) {
     if (window->imgui) {
         return false;
     }
@@ -175,27 +173,22 @@ static void video_sdl_quit() {
     g_list_free(windows);
 }
 
-static void window_process_imgui_events(const SDL_Event* event) {
-    GList* windows = g_hash_table_get_values(s_video_data->windows);
-
-    for (GList* node = windows; node != NULL; node = g_list_next(node)) {
-        window_t* window = node->data;
-        if (!window->imgui) {
-            continue;
-        }
-
-        igSetCurrentContext(window->imgui);
-        ImGui_ImplSDL3_ProcessEvent(event);
-    }
-
-    g_list_free(windows);
-}
+static void window_process_imgui_events(const SDL_Event* event) {}
 
 void window_poll() {
-    SDL_Event event;
+    GList* windows = g_hash_table_get_values(s_video_data->windows);
 
+    SDL_Event event;
     while (SDL_PollEvent(&event)) {
-        window_process_imgui_events(&event);
+        for (GList* node = windows; node != NULL; node = g_list_next(node)) {
+            window_t* window = node->data;
+            if (!window->imgui) {
+                continue;
+            }
+
+            igSetCurrentContext(window->imgui);
+            ImGui_ImplSDL3_ProcessEvent(&event);
+        }
 
         switch (event.type) {
         case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
@@ -206,6 +199,18 @@ void window_poll() {
             break;
         }
     }
+
+    for (GList* node = windows; node != NULL; node = g_list_next(node)) {
+        window_t* window = node->data;
+        if (!window->imgui) {
+            continue;
+        }
+
+        igSetCurrentContext(window->imgui);
+        ImGui_ImplSDL3_NewFrame();
+    }
+
+    g_list_free(windows);
 }
 
 bool window_is_close_requested(window_t* window) { return window->close_requested; }
