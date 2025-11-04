@@ -115,7 +115,7 @@ struct indexed_render_call {
 
 typedef struct rasterizer rasterizer_t;
 
-rasterizer_t* rasterizer_create();
+rasterizer_t* rasterizer_create(uint32_t num_scanlines);
 void rasterizer_destroy(rasterizer_t* rast);
 
 void framebuffer_clear(struct framebuffer* fb, const image_pixel* clear_values);

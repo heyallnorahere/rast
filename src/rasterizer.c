@@ -10,6 +10,7 @@
 
 struct rasterizer {
     thread_worker_t* worker;
+    uint32_t num_scanlines;
 };
 
 static void image_set_pixel(image_t* image, uint32_t x, uint32_t y, const image_pixel* value) {
@@ -307,19 +308,36 @@ static void render_pixel(uint32_t x, uint32_t y, const struct render_context* rc
     mem_free(context.working_data);
 }
 
-static void render_pixel_job(void* user_data, uint64_t job) {
-    const struct render_context* context = user_data;
+struct scanline {
+    const struct render_context* rc;
+    const struct rect* scissor;
 
-    uint32_t x = job & 0xFFFFFFFF;
-    uint32_t y = (job >> 32) & 0xFFFFFFFF;
+    uint32_t index;
+};
 
-    render_pixel(x, y, context);
-    semaphore_signal(context->semaphore);
+void render_scanline(void* user_data, void* job) {
+    rasterizer_t* rast = user_data;
+    struct scanline* sl = job;
+
+    for (uint32_t y_offset = sl->index; y_offset < sl->scissor->height;
+         y_offset += rast->num_scanlines) {
+        uint32_t y = sl->scissor->y + y_offset;
+
+        for (uint32_t x_offset = 0; x_offset < sl->scissor->width; x_offset++) {
+            uint32_t x = sl->scissor->x + x_offset;
+
+            render_pixel(x, y, sl->rc);
+        }
+    }
+
+    semaphore_signal(sl->rc->semaphore);
 }
 
-rasterizer_t* rasterizer_create() {
+rasterizer_t* rasterizer_create(uint32_t num_scanlines) {
     rasterizer_t* rast = mem_alloc(sizeof(rasterizer_t));
-    rast->worker = thread_worker_start(render_pixel_job, NULL);
+
+    rast->worker = thread_worker_start(render_scanline, rast);
+    rast->num_scanlines = num_scanlines;
 
     return rast;
 }
@@ -346,7 +364,7 @@ static uint32_t map_dimension(float value, uint32_t size) {
     return screen_space * size;
 }
 
-static void gen_scissor_rect(const struct render_context* rc, struct rect* scissor,
+static bool gen_scissor_rect(const struct render_context* rc, struct rect* scissor,
                              const struct rect* existing_scissor) {
     uint32_t x0 = UINT32_MAX;
     uint32_t y0 = UINT32_MAX;
@@ -402,6 +420,8 @@ static void gen_scissor_rect(const struct render_context* rc, struct rect* sciss
     scissor->y = y0;
     scissor->width = x1 - x0;
     scissor->height = y1 - y0;
+
+    return x1 > x0 && y1 > y0;
 }
 
 static void render_face(rasterizer_t* rast, const struct indexed_render_call* data, uint32_t face,
@@ -411,26 +431,23 @@ static void render_face(rasterizer_t* rast, const struct indexed_render_call* da
     // todo: support geometry shaders?
 
     struct rect scissor;
-    gen_scissor_rect(rc, &scissor, data->scissor_rect);
-
-    uint64_t total_jobs = 0;
-    for (uint32_t y_offset = 0; y_offset < scissor.height; y_offset++) {
-        uint32_t y = scissor.y + y_offset;
-
-        for (uint32_t x_offset = 0; x_offset < scissor.width; x_offset++) {
-            uint32_t x = scissor.x + x_offset;
-
-            uint64_t job_id = (uint64_t)y << 32 | x;
-            thread_worker_push_job(rast->worker, job_id);
-
-            total_jobs++;
-        }
+    if (!gen_scissor_rect(rc, &scissor, data->scissor_rect)) {
+        return;
     }
 
-    // this is slow! figure out how to do it faster
-    for (uint64_t i = 0; i < total_jobs; i++) {
-        semaphore_wait(rc->semaphore);
+    uint32_t total_jobs = MIN(scissor.height, rast->num_scanlines);
+    struct scanline scanlines[total_jobs];
+
+    for (uint32_t i = 0; i < total_jobs; i++) {
+        struct scanline* sl = scanlines + i;
+        sl->index = i;
+        sl->scissor = &scissor;
+        sl->rc = rc;
+
+        thread_worker_push_job(rast->worker, sl);
     }
+
+    semaphore_wait_for_value(rc->semaphore, total_jobs);
 }
 
 static uint8_t topology_get_vertex_count(topology_type topology) {
@@ -466,7 +483,6 @@ void render_indexed(rasterizer_t* rast, struct indexed_render_call* data) {
     rc.uniform_data = data->uniform_data;
     rc.semaphore = semaphore_create();
 
-    thread_worker_set_data(rast->worker, &rc);
     for (uint32_t i = 0; i < data->instance_count; i++) {
         rc.instance_id = data->first_instance + i;
 

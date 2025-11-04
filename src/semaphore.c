@@ -46,6 +46,6 @@ void semaphore_wait_for_value(semaphore_t *semaphore, uint64_t target) {
         g_cond_wait(&semaphore->signal, &semaphore->mutex);
     }
 
-    semaphore->value--;
+    semaphore->value -= target;
     g_mutex_unlock(&semaphore->mutex);
 }
