@@ -78,6 +78,29 @@ typedef enum {
     TOPOLOGY_TYPE_QUADS,
 } topology_type;
 
+typedef enum {
+    BLEND_OP_ADD,
+    BLEND_OP_SRC_SUB_DST,
+    BLEND_OP_DST_SUB_SRC,
+} blend_op;
+
+typedef enum {
+    BLEND_FACTOR_ZERO,
+    BLEND_FACTOR_ONE,
+    BLEND_FACTOR_SRC_ALPHA,
+    BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+} blend_factor;
+
+struct component_blend_op {
+    blend_op op;
+    blend_factor src_factor, dst_factor;
+};
+
+struct blend_attachment {
+    bool enabled;
+    struct component_blend_op color, alpha;
+};
+
 struct pipeline {
     struct shader shader;
 
@@ -90,6 +113,9 @@ struct pipeline {
 
     winding_order winding;
     topology_type topology;
+
+    uint32_t blend_attachment_count;
+    const struct blend_attachment* blend_attachments;
 };
 
 struct rect {

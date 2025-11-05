@@ -12,6 +12,7 @@ struct imgui_renderer_data {
     struct pipeline pipeline;
     struct vertex_binding binding;
     struct blended_parameter blended_params[2];
+    struct blend_attachment color_blending;
 };
 
 struct imgui_fragment_data {
@@ -90,6 +91,8 @@ void imgui_init_renderer(rasterizer_t* rast) {
     data->pipeline.bindings = &data->binding;
     data->pipeline.topology = TOPOLOGY_TYPE_TRIANGLES;
     data->pipeline.winding = WINDING_ORDER_CCW;
+    data->pipeline.blend_attachment_count = 1;
+    data->pipeline.blend_attachments = &data->color_blending;
 
     data->blended_params[0].count = 2;
     data->blended_params[0].type = ELEMENT_TYPE_FLOAT;
@@ -101,6 +104,14 @@ void imgui_init_renderer(rasterizer_t* rast) {
 
     data->binding.input_rate = VERTEX_INPUT_RATE_VERTEX;
     data->binding.stride = sizeof(struct ImDrawVert);
+
+    data->color_blending.enabled = true;
+    data->color_blending.color.op = BLEND_OP_ADD;
+    data->color_blending.color.src_factor = BLEND_FACTOR_SRC_ALPHA;
+    data->color_blending.color.dst_factor = BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    data->color_blending.alpha.op = BLEND_OP_ADD;
+    data->color_blending.alpha.src_factor = BLEND_FACTOR_ONE;
+    data->color_blending.alpha.dst_factor = BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
 
     // viewports? maybe
 }

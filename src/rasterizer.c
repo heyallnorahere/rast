@@ -13,6 +13,18 @@ struct rasterizer {
     uint32_t num_scanlines;
 };
 
+static image_pixel image_get_pixel(const image_t* image, uint32_t x, uint32_t y) {
+    uint32_t index = image_get_pixel_index(image, x, y);
+
+    size_t offset = image->pixel_stride * index;
+    void* pixel_address = image->data + offset;
+
+    image_pixel pixel;
+    memcpy(&pixel, pixel_address, image->pixel_stride);
+
+    return pixel;
+}
+
 static void image_set_pixel(image_t* image, uint32_t x, uint32_t y, const image_pixel* value) {
     uint32_t index = image_get_pixel_index(image, x, y);
 
@@ -229,15 +241,79 @@ struct render_context {
     semaphore_t* semaphore;
 };
 
-struct pixel_data {
-    uint32_t x, y;
-    float point[2];
+struct blend_context {
+    float src_alpha, dst_alpha;
 };
 
-struct pixel_render_job {
-    struct pixel_data data;
-    const struct pixel_context* context;
-};
+static float get_blending_factor(blend_factor factor, const struct blend_context* bc) {
+    switch (factor) {
+    case BLEND_FACTOR_SRC_ALPHA:
+        return bc->src_alpha;
+    case BLEND_FACTOR_ONE_MINUS_SRC_ALPHA:
+        return 1.f - bc->src_alpha;
+    case BLEND_FACTOR_ONE:
+        return 1.f;
+    case BLEND_FACTOR_ZERO:
+    default:
+        return 0.f;
+    }
+}
+
+static uint32_t blend_channel(uint8_t src, uint8_t dst, const struct blend_context* bc,
+                              const struct component_blend_op* op) {
+    float src_factor = get_blending_factor(op->src_factor, bc);
+    float dst_factor = get_blending_factor(op->dst_factor, bc);
+
+    float src_val = (float)src / (float)0xFF;
+    float dst_val = (float)dst / (float)0xFF;
+
+    float src_operand = src_val * src_factor;
+    float dst_operand = dst_val * dst_factor;
+
+    float result;
+    switch (op->op) {
+    case BLEND_OP_ADD:
+        result = src_operand + dst_operand;
+        break;
+    case BLEND_OP_SRC_SUB_DST:
+        result = src_operand - dst_operand;
+        break;
+    case BLEND_OP_DST_SUB_SRC:
+        result = dst_operand - src_operand;
+        break;
+    default:
+        result = 0.f;
+    }
+
+    result = MAX(0.f, result);
+    return result > 1.f ? 0xFF : (uint8_t)(result * (float)0xFF);
+}
+
+static uint32_t blend_pixel(uint32_t src, uint32_t dst, const struct blend_attachment* attachment) {
+    if (!attachment->enabled) {
+        return src;
+    }
+
+    uint8_t src_alpha = src & 0xFF;
+    uint8_t dst_alpha = dst & 0xFF;
+
+    struct blend_context bc;
+    bc.src_alpha = (float)src_alpha / (float)0xFF;
+    bc.dst_alpha = (float)dst_alpha / (float)0xFF;
+
+    uint32_t result = 0;
+    for (uint32_t i = 0; i < 4; i++) {
+        uint8_t src_channel = (src >> (i * 8)) & 0xFF;
+        uint8_t dst_channel = (dst >> (i * 8)) & 0xFF;
+
+        const struct component_blend_op* op = i > 0 ? &attachment->color : &attachment->alpha;
+        uint8_t channel = blend_channel(src_channel, dst_channel, &bc, op);
+
+        result |= (uint32_t)channel << (i * 8);
+    }
+
+    return result;
+}
 
 static void render_pixel(uint32_t x, uint32_t y, const struct render_context* rc) {
     float weights[rc->vertices];
@@ -274,16 +350,27 @@ static void render_pixel(uint32_t x, uint32_t y, const struct render_context* rc
     shader_blend_parameters(&rc->pipeline->shader, rc->outputs, rc->vertices, weights, depth,
                             context.working_data);
 
-    uint32_t color = rc->pipeline->shader.fragment_stage(&context);
+    uint32_t src_color = rc->pipeline->shader.fragment_stage(&context);
+    uint32_t blending_index = 0;
+
     for (uint32_t i = 0; i < rc->fb->attachment_count; i++) {
         image_t* attachment = rc->fb->attachments[i];
 
         bool discard = false;
         image_pixel value;
 
+        image_pixel dst = image_get_pixel(attachment, x, y);
         switch (attachment->format) {
         case IMAGE_FORMAT_COLOR:
-            value.color = color;
+            if (blending_index >= rc->pipeline->blend_attachment_count) {
+                value.color = src_color;
+            } else {
+                const struct blend_attachment* attachment =
+                    &rc->pipeline->blend_attachments[blending_index++];
+
+                value.color = blend_pixel(src_color, dst.color, attachment);
+            }
+
             break;
         case IMAGE_FORMAT_DEPTH:
             if (rc->pipeline->depth.write) {
@@ -439,7 +526,7 @@ static void render_face(rasterizer_t* rast, const struct indexed_render_call* da
     struct scanline scanlines[total_jobs];
 
     for (uint32_t i = 0; i < total_jobs; i++) {
-        struct scanline* sl = scanlines + i;
+        struct scanline* sl = &scanlines[i];
         sl->index = i;
         sl->scissor = &scissor;
         sl->rc = rc;
