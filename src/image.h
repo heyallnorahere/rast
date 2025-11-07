@@ -4,6 +4,11 @@
 #include <stdint.h>
 #include <stddef.h>
 
+typedef union image_pixel {
+    uint32_t color;
+    float depth;
+} image_pixel;
+
 typedef enum {
     IMAGE_FORMAT_COLOR,
     IMAGE_FORMAT_DEPTH,

@@ -3,6 +3,9 @@
 #include "mem.h"
 #include "rasterizer.h"
 #include "mat.h"
+#include "texture.h"
+#include "image.h"
+#include "util.h"
 
 #include <string.h>
 
@@ -13,29 +16,25 @@ struct imgui_renderer_data {
     struct vertex_binding binding;
     struct blended_parameter blended_params[2];
     struct blend_attachment color_blending;
+
+    struct sampler sampler;
 };
 
 struct imgui_fragment_data {
     float uv[2];
-    uint32_t color;
+    float color[4];
 };
 
 struct imgui_uniform_data {
     float projection[4 * 4];
+    struct texture tex;
 };
 
-static uint32_t convert_imgui_color(uint32_t src) {
-    // imgui colors are stored in reverse of ours
-    
-    uint32_t dst = 0;
-    for (uint32_t dst_index = 0; dst_index < 4; dst_index++) {
-        uint32_t src_index = 4 - (dst_index + 1);
-
-        uint8_t byte = (src >> (src_index * 8)) & 0xFF;
-        dst |= byte << (dst_index * 8);
+static void convert_imgui_color(uint32_t src, float* color) {
+    for (uint32_t i = 0; i < 4; i++) {
+        uint8_t byte = (src >> (i * 8)) & 0xFF;
+        color[i] = (float)byte / (float)0xFF;
     }
-
-    return dst;
 }
 
 static void imgui_vertex_shader(const void* const* bindings, const struct shader_context* context,
@@ -53,15 +52,22 @@ static void imgui_vertex_shader(const void* const* bindings, const struct shader
 
     struct imgui_fragment_data* frag_data = context->working_data;
     memcpy(frag_data->uv, &vertex->uv, 2 * sizeof(float));
-    frag_data->color = convert_imgui_color(vertex->col);
+    convert_imgui_color(vertex->col, frag_data->color);
 }
 
 static uint32_t imgui_fragment_shader(const struct shader_context* context) {
     const struct imgui_fragment_data* frag_data = context->working_data;
-    const struct imgui_uniform_data* render_data = context->uniform_data;
+    const struct imgui_uniform_data* uniforms = context->uniform_data;
 
-    // todo: texture sampling
-    return frag_data->color;
+    float sample[4];
+    texture_sample(&uniforms->tex, frag_data->uv, sample);
+
+    float color[4];
+    for (uint32_t i = 0; i < 4; i++) {
+        color[i] = sample[i] * frag_data->color[i];
+    }
+
+    return util_float4_to_u32(color);
 }
 
 static void* imgui_mem_alloc(size_t size, void* user_data) { return mem_alloc(size); }
@@ -93,13 +99,14 @@ void imgui_init_renderer(rasterizer_t* rast) {
     data->pipeline.winding = WINDING_ORDER_CCW;
     data->pipeline.blend_attachment_count = 1;
     data->pipeline.blend_attachments = &data->color_blending;
+    data->pipeline.cull_back = false;
 
     data->blended_params[0].count = 2;
     data->blended_params[0].type = ELEMENT_TYPE_FLOAT;
     data->blended_params[0].offset = (size_t)&((struct imgui_fragment_data*)NULL)->uv;
 
     data->blended_params[1].count = 4;
-    data->blended_params[1].type = ELEMENT_TYPE_BYTE;
+    data->blended_params[1].type = ELEMENT_TYPE_FLOAT;
     data->blended_params[1].offset = (size_t)&((struct imgui_fragment_data*)NULL)->color;
 
     data->binding.input_rate = VERTEX_INPUT_RATE_VERTEX;
@@ -113,7 +120,18 @@ void imgui_init_renderer(rasterizer_t* rast) {
     data->color_blending.alpha.src_factor = BLEND_FACTOR_ONE;
     data->color_blending.alpha.dst_factor = BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
 
+    data->sampler.filter = SAMPLER_FILTER_LINEAR;
+
     // viewports? maybe
+}
+
+static void imgui_destroy_texture(ImTextureData* tex) {
+    image_free(tex->BackendUserData);
+
+    tex->BackendUserData = NULL;
+    tex->TexID = 0;
+
+    tex->Status = ImTextureStatus_Destroyed;
 }
 
 void imgui_shutdown_renderer() {
@@ -127,10 +145,70 @@ void imgui_shutdown_renderer() {
         return;
     }
 
+    ImGuiPlatformIO* platform_io = igGetPlatformIO_Nil();
+    for (int i = 0; i < platform_io->Textures.Size; i++) {
+        imgui_destroy_texture(platform_io->Textures.Data[i]);
+    }
+
     // todo: if we use viewports, destroy resources? idk
 
     mem_free(data);
     io->BackendRendererUserData = NULL;
+}
+
+static void imgui_update_texture(ImTextureData* tex) {
+    if (tex->Status == ImTextureStatus_OK) {
+        return;
+    }
+
+    image_t* image;
+    bool new_texture = tex->Status == ImTextureStatus_WantCreate;
+    if (new_texture) {
+        image = image_allocate(tex->Width, tex->Height, IMAGE_FORMAT_COLOR);
+        tex->BackendUserData = image;
+        tex->TexID = (ImTextureID)image;
+    } else {
+        image = tex->BackendUserData;
+    }
+
+    if (new_texture || tex->Status == ImTextureStatus_WantUpdates) {
+        struct rect upload_scissor;
+        upload_scissor.x = new_texture ? 0 : tex->UpdateRect.x;
+        upload_scissor.y = new_texture ? 0 : tex->UpdateRect.y;
+        upload_scissor.width = new_texture ? tex->Width : tex->UpdateRect.w;
+        upload_scissor.height = new_texture ? tex->Height : tex->UpdateRect.h;
+
+        const uint8_t* src = tex->Pixels;
+        uint32_t* dst = image->data;
+
+        for (uint32_t y_src = 0; y_src < upload_scissor.height; y_src++) {
+            uint32_t y_dst = upload_scissor.y + y_src;
+
+            for (uint32_t x_src = 0; x_src < upload_scissor.width; x_src++) {
+                uint32_t x_dst = x_src + upload_scissor.x;
+
+                uint32_t src_index = (y_src * upload_scissor.width) + x_src;
+                uint32_t dst_index = (y_dst * image->width) + x_dst;
+
+                size_t src_offset = src_index * tex->BytesPerPixel;
+                const uint8_t* src_pixel = src + src_offset;
+
+                uint32_t dst_pixel = 0;
+                for (uint32_t i = 0; i < tex->BytesPerPixel; i++) {
+                    uint8_t channel = src_pixel[i];
+                    dst_pixel |= (uint32_t)channel << ((3 - i) * 8);
+                }
+
+                dst[dst_index] = dst_pixel;
+            }
+        }
+
+        tex->Status = ImTextureStatus_OK;
+    }
+
+    if (tex->Status == ImTextureStatus_WantDestroy) {
+        imgui_destroy_texture(tex);
+    }
 }
 
 void imgui_render(ImDrawData* data, struct framebuffer* fb) {
@@ -160,6 +238,8 @@ void imgui_render(ImDrawData* data, struct framebuffer* fb) {
     // bug: rasterizer doesn't like it when we use z=0 for vertices
     uniforms.projection[11] = 0.1f;
 
+    uniforms.tex.sampler = &renderer_data->sampler;
+
     struct indexed_render_call call;
     struct rect scissor;
 
@@ -173,6 +253,15 @@ void imgui_render(ImDrawData* data, struct framebuffer* fb) {
 
     ImVec2 scissor_offset = data->DisplayPos;
     ImVec2 scissor_scale = data->FramebufferScale;
+
+    if (data->Textures) {
+        for (int i = 0; i < data->Textures->Size; i++) {
+            ImTextureData* tex = data->Textures->Data[i];
+            if (tex->Status != ImTextureStatus_OK) {
+                imgui_update_texture(tex);
+            }
+        }
+    }
 
     for (int i = 0; i < data->CmdListsCount; i++) {
         ImDrawList* draw_list = data->CmdLists.Data[i];
@@ -193,6 +282,9 @@ void imgui_render(ImDrawData* data, struct framebuffer* fb) {
             call.first_index = cmd->IdxOffset;
             call.index_count = cmd->ElemCount;
 
+            ImTextureID tex_id = ImDrawCmd_GetTexID(cmd);
+            uniforms.tex.image = (image_t*)tex_id;
+
             float scissor_min[2], scissor_max[2];
             scissor_min[0] = (cmd->ClipRect.x - scissor_offset.x) * scissor_scale.x;
             scissor_min[1] = (cmd->ClipRect.y - scissor_offset.y) * scissor_scale.y;
@@ -204,8 +296,6 @@ void imgui_render(ImDrawData* data, struct framebuffer* fb) {
             scissor.width = (uint32_t)(scissor_max[0] - scissor_min[0]);
             scissor.height = (uint32_t)(scissor_max[1] - scissor_min[1]);
 
-            // todo: pass texture data!
-            
             render_indexed(renderer_data->rast, &call);
         }
     }

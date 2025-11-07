@@ -105,8 +105,8 @@ static float signed_quad_area(const float* a, const float* b, const float* c, bo
     return vec_dot(ac, ab_normal, 2);
 }
 
-static bool face_contains_point(bool cw, const struct vertex_output* outputs, uint8_t vertices,
-                                const float* point, float* weights) {
+static bool face_contains_point(bool cw, bool cull_back, const struct vertex_output* outputs,
+                                uint8_t vertices, const float* point, float* weights) {
     float area_sum = 0.f;
     float areas[vertices];
 
@@ -117,7 +117,7 @@ static bool face_contains_point(bool cw, const struct vertex_output* outputs, ui
         const float* b = outputs[next_vertex_id].position;
 
         float area = signed_quad_area(a, b, point, cw);
-        if (area <= 0.f) {
+        if (cull_back && area <= 0.f) {
             return false;
         }
 
@@ -126,12 +126,20 @@ static bool face_contains_point(bool cw, const struct vertex_output* outputs, ui
     }
 
     if (area_sum <= 0) {
-        return false;
+        area_sum *= -1.f;
     }
 
-    if (weights) {
-        for (uint8_t i = 0; i < vertices; i++) {
+    bool first_out = areas[0] <= 0.f;
+    for (uint8_t i = 0; i < vertices; i++) {
+        if (weights) {
             weights[i] = areas[i] / area_sum;
+        }
+
+        if (i > 0 && !cull_back) {
+            bool current_out = areas[i] <= 0.f;
+            if (first_out != current_out) {
+                return false;
+            }
         }
     }
 
@@ -322,8 +330,8 @@ static void render_pixel(uint32_t x, uint32_t y, const struct render_context* rc
     point[0] = (float)x / (float)rc->fb->width * 2.f - 1.f;
     point[1] = (float)y / (float)rc->fb->height * 2.f - 1.f;
 
-    if (!face_contains_point(rc->pipeline->winding == WINDING_ORDER_CW, rc->outputs, rc->vertices,
-                             point, weights)) {
+    if (!face_contains_point(rc->pipeline->winding == WINDING_ORDER_CW, rc->pipeline->cull_back,
+                             rc->outputs, rc->vertices, point, weights)) {
         return;
     }
 

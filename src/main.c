@@ -121,6 +121,7 @@ int main(int argc, const char** argv) {
     pipeline.depth.write = true;
     pipeline.binding_count = 2;
     pipeline.bindings = bindings;
+    pipeline.cull_back = true;
     pipeline.winding = WINDING_ORDER_CCW;
     pipeline.topology = TOPOLOGY_TYPE_TRIANGLES;
 

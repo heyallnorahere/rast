@@ -7,6 +7,7 @@
 
 // from image.h
 typedef struct image image_t;
+typedef union image_pixel image_pixel;
 
 // from thread_worker.h
 typedef struct thread_worker thread_worker_t;
@@ -17,11 +18,6 @@ struct framebuffer {
 
     uint32_t width, height;
 };
-
-typedef union {
-    uint32_t color;
-    float depth;
-} image_pixel;
 
 typedef enum {
     ELEMENT_TYPE_BYTE,
@@ -111,6 +107,7 @@ struct pipeline {
     const struct vertex_binding* bindings;
     uint32_t binding_count;
 
+    bool cull_back;
     winding_order winding;
     topology_type topology;
 
