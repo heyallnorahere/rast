@@ -178,20 +178,16 @@ static void imgui_update_texture(ImTextureData* tex) {
         upload_scissor.width = new_texture ? tex->Width : tex->UpdateRect.w;
         upload_scissor.height = new_texture ? tex->Height : tex->UpdateRect.h;
 
-        const uint8_t* src = tex->Pixels;
         uint32_t* dst = image->data;
-
         for (uint32_t y_src = 0; y_src < upload_scissor.height; y_src++) {
             uint32_t y_dst = upload_scissor.y + y_src;
 
+            void* src_row = ImTextureData_GetPixelsAt(tex, upload_scissor.x, y_dst);
             for (uint32_t x_src = 0; x_src < upload_scissor.width; x_src++) {
-                uint32_t x_dst = x_src + upload_scissor.x;
+                uint32_t x_dst = upload_scissor.x + x_src;
 
-                uint32_t src_index = (y_src * upload_scissor.width) + x_src;
-                uint32_t dst_index = (y_dst * image->width) + x_dst;
-
-                size_t src_offset = src_index * tex->BytesPerPixel;
-                const uint8_t* src_pixel = src + src_offset;
+                size_t src_offset = x_src * tex->BytesPerPixel;
+                const uint8_t* src_pixel = src_row + src_offset;
 
                 uint32_t dst_pixel = 0;
                 for (uint32_t i = 0; i < tex->BytesPerPixel; i++) {
@@ -199,6 +195,7 @@ static void imgui_update_texture(ImTextureData* tex) {
                     dst_pixel |= (uint32_t)channel << ((3 - i) * 8);
                 }
 
+                uint32_t dst_index = (y_dst * image->width) + x_dst;
                 dst[dst_index] = dst_pixel;
             }
         }

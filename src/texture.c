@@ -6,8 +6,6 @@
 #include <string.h>
 #include <math.h>
 
-#include <glib.h>
-
 uint32_t texture_get_channels(const struct texture* texture) {
     switch (texture->image->format) {
     case IMAGE_FORMAT_COLOR:
