@@ -178,7 +178,7 @@ int main(int argc, const char** argv) {
     float camera_distance = 2.f;
 
     window = window_create("rast", 1600, 900);
-    rast = rasterizer_create(16);
+    rast = rasterizer_create(32, true);
 
     igCreateContext(NULL);
     window_init_imgui(window);

@@ -9,9 +9,6 @@
 typedef struct image image_t;
 typedef union image_pixel image_pixel;
 
-// from thread_worker.h
-typedef struct thread_worker thread_worker_t;
-
 struct framebuffer {
     image_t* const* attachments;
     uint32_t attachment_count;
@@ -138,7 +135,7 @@ struct indexed_render_call {
 
 typedef struct rasterizer rasterizer_t;
 
-rasterizer_t* rasterizer_create(uint32_t num_scanlines);
+rasterizer_t* rasterizer_create(uint32_t num_scanlines, bool multithread);
 void rasterizer_destroy(rasterizer_t* rast);
 
 void framebuffer_clear(struct framebuffer* fb, const image_pixel* clear_values);

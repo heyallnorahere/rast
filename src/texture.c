@@ -53,11 +53,11 @@ static void texture_sample_linear(const struct texture* texture, const float* uv
 
         float delta_x = x_f - x;
         float delta_y = y_f - y;
+        float weight = (1.f - fabsf(delta_x)) * (1.f - fabsf(delta_y));
 
-        float current_sample[4];
+        float current_sample[channels];
         texture_get_pixel(texture->image, x, y, current_sample);
 
-        float weight = (1.f - fabsf(delta_x)) * (1.f - fabsf(delta_y));
         for (uint32_t j = 0; j < channels; j++) {
             sample[j] += current_sample[j] * weight;
         }

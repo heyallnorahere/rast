@@ -425,15 +425,21 @@ void render_scanline(void* user_data, void* job) {
         }
     }
 
-    semaphore_signal(sl->rc->semaphore);
+    if (sl->rc->semaphore) {
+        semaphore_signal(sl->rc->semaphore);
+    }
 }
 
-rasterizer_t* rasterizer_create(uint32_t num_scanlines) {
+rasterizer_t* rasterizer_create(uint32_t num_scanlines, bool multithread) {
     rasterizer_t* rast = mem_alloc(sizeof(rasterizer_t));
 
-    rast->worker = thread_worker_start(render_scanline, rast);
-    rast->num_scanlines = num_scanlines;
+    if (multithread) {
+        rast->worker = thread_worker_start(render_scanline, rast);
+    } else {
+        rast->worker = NULL;
+    }
 
+    rast->num_scanlines = num_scanlines;
     return rast;
 }
 
@@ -539,10 +545,18 @@ static void render_face(rasterizer_t* rast, const struct indexed_render_call* da
         sl->scissor = &scissor;
         sl->rc = rc;
 
-        thread_worker_push_job(rast->worker, sl);
+        // if multithreading is supported, we want to take advantage of it
+        if (rast->worker) {
+            thread_worker_push_job(rast->worker, sl);
+        } else {
+            render_scanline(rast, sl);
+        }
     }
 
-    semaphore_wait_for_value(rc->semaphore, total_jobs);
+    // if we have a semaphore, its probably being signaled
+    if (rc->semaphore) {
+        semaphore_wait_for_value(rc->semaphore, total_jobs);
+    }
 }
 
 static uint8_t topology_get_vertex_count(topology_type topology) {
@@ -576,7 +590,12 @@ void render_indexed(rasterizer_t* rast, struct indexed_render_call* data) {
     rc.outputs = outputs;
     rc.vertices = vertices_per_face;
     rc.uniform_data = data->uniform_data;
-    rc.semaphore = semaphore_create();
+
+    if (rast->worker) {
+        rc.semaphore = semaphore_create();
+    } else {
+        rc.semaphore = NULL;
+    }
 
     for (uint32_t i = 0; i < data->instance_count; i++) {
         rc.instance_id = data->first_instance + i;
