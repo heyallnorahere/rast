@@ -1,7 +1,7 @@
 #include "window.h"
 
-#include "mem.h"
-#include "image.h"
+#include "core/mem.h"
+#include "core/image.h"
 
 #define SDL_MAIN_HANDLED
 #include <SDL3/SDL.h>

@@ -9,9 +9,12 @@ pkg_check_modules(glib2 REQUIRED IMPORTED_TARGET glib-2.0)
 
 set(RAST_SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src")
 file(
-    GLOB RAST_SRC
+    GLOB_RECURSE RAST_SRC CONFIGURE_DEPENDS
     "${RAST_SRC_DIR}/*.c"
 )
+
+set(RAST_MAIN "${RAST_SRC_DIR}/main.c")
+list(REMOVE_ITEM RAST_SRC ${RAST_MAIN})
 
 set(CIMGUI_DIR "${CMAKE_CURRENT_SOURCE_DIR}/vendor/cimgui")
 set(IMGUI_DIR "${CIMGUI_DIR}/imgui")
@@ -57,11 +60,15 @@ target_compile_definitions(rast_imgui PUBLIC ${IMGUI_DEFINES})
 target_link_libraries(rast_imgui PUBLIC ${IMGUI_LIBRARIES})
 target_include_directories(rast_imgui PUBLIC ${IMGUI_INCLUDES})
 
-add_executable(rast ${RAST_SRC})
+add_library(rast STATIC ${RAST_SRC})
+target_include_directories(rast PUBLIC ${RAST_SRC_DIR})
 target_link_libraries(
-    rast PRIVATE
+    rast PUBLIC
     m
     rast_imgui
     SDL3::SDL3
     PkgConfig::glib2
 )
+
+add_executable(demo ${RAST_MAIN})
+target_link_libraries(demo PRIVATE rast)

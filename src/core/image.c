@@ -1,6 +1,6 @@
 #include "image.h"
 
-#include "mem.h"
+#include "core/mem.h"
 
 #define SDL_MAIN_HANDLED
 #include <SDL3/SDL.h>

@@ -1,7 +1,7 @@
 #include "texture.h"
 
-#include "image.h"
-#include "util.h"
+#include "core/image.h"
+#include "core/util.h"
 
 #include <string.h>
 #include <math.h>

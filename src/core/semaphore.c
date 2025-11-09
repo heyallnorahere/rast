@@ -1,6 +1,6 @@
 #include "semaphore.h"
 
-#include "mem.h"
+#include "core/mem.h"
 
 #include <glib.h>
 

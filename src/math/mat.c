@@ -1,6 +1,6 @@
 #include "mat.h"
 
-#include "vec.h"
+#include "math/vec.h"
 
 #include <string.h>
 

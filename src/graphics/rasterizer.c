@@ -1,10 +1,10 @@
 #include "rasterizer.h"
 
-#include "image.h"
-#include "mem.h"
-#include "vec.h"
-#include "thread_worker.h"
-#include "semaphore.h"
+#include "core/image.h"
+#include "core/mem.h"
+#include "core/thread_worker.h"
+#include "core/semaphore.h"
+#include "math/vec.h"
 
 #include <glib.h>
 

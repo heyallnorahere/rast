@@ -1,11 +1,11 @@
 #include "imgui.h"
 
-#include "mem.h"
-#include "rasterizer.h"
-#include "mat.h"
-#include "texture.h"
-#include "image.h"
-#include "util.h"
+#include "core/mem.h"
+#include "core/image.h"
+#include "core/util.h"
+#include "graphics/rasterizer.h"
+#include "graphics/texture.h"
+#include "math/mat.h"
 
 #include <string.h>
 

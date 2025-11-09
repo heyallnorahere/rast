@@ -2,7 +2,7 @@
 
 #include <math.h>
 
-#include "mat.h"
+#include "math/mat.h"
 
 void vec_add(const float* lhs, const float* rhs, uint32_t count, float* result) {
     mat_add(lhs, rhs, count, 1, result);

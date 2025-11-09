@@ -2,13 +2,12 @@
 
 #include <math.h>
 
-#include "image.h"
-#include "rasterizer.h"
-#include "vec.h"
-#include "window.h"
-#include "mat.h"
-
-#include "imgui.h"
+#include "core/image.h"
+#include "math/vec.h"
+#include "math/mat.h"
+#include "graphics/rasterizer.h"
+#include "graphics/window.h"
+#include "graphics/imgui.h"
 
 struct uniforms {
     float view_projection[4 * 4];
