@@ -1,13 +1,14 @@
-#include <glib.h>
-
 #include <math.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
 
-#include "core/image.h"
 #include "math/vec.h"
 #include "math/mat.h"
 #include "graphics/rasterizer.h"
 #include "graphics/window.h"
 #include "graphics/imgui.h"
+#include "graphics/image.h"
 
 struct uniforms {
     float view_projection[4 * 4];
@@ -284,7 +285,7 @@ int main(int argc, const char** argv) {
         mat_look_at(view, camera_position, center, up);
         mat_dot(projection, view, 4, 4, 4, uniforms.view_projection);
 
-        framebuffer_clear(&fb, clear);
+        framebuffer_clear(rast, &fb, clear);
         render_indexed(rast, &call);
 
         igRender();
@@ -299,6 +300,7 @@ int main(int argc, const char** argv) {
     imgui_shutdown_renderer();
     window_destroy(window);
     igDestroyContext(NULL);
+
     rasterizer_destroy(rast);
 
     return success ? 0 : 1;

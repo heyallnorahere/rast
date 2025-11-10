@@ -5,6 +5,9 @@
 #include <stddef.h>
 #include <stdbool.h>
 
+// from geo.h
+struct rect;
+
 // from image.h
 typedef struct image image_t;
 typedef union image_pixel image_pixel;
@@ -112,11 +115,6 @@ struct pipeline {
     const struct blend_attachment* blend_attachments;
 };
 
-struct rect {
-    uint32_t x, y;
-    uint32_t width, height;
-};
-
 struct indexed_render_call {
     const void* const* vertices;
     const uint16_t* indices;
@@ -138,7 +136,7 @@ typedef struct rasterizer rasterizer_t;
 rasterizer_t* rasterizer_create(uint32_t num_scanlines, bool multithread);
 void rasterizer_destroy(rasterizer_t* rast);
 
-void framebuffer_clear(struct framebuffer* fb, const image_pixel* clear_values);
+void framebuffer_clear(rasterizer_t* rast, struct framebuffer* fb, const image_pixel* clear_values);
 
 void render_indexed(rasterizer_t* rast, struct indexed_render_call* data);
 

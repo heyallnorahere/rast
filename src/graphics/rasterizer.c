@@ -1,16 +1,39 @@
 #include "rasterizer.h"
 
-#include "core/image.h"
 #include "core/mem.h"
 #include "core/thread_worker.h"
 #include "core/semaphore.h"
 #include "math/vec.h"
+#include "math/geo.h"
+#include "graphics/image.h"
 
 #include <glib.h>
 
 struct rasterizer {
     thread_worker_t* worker;
     uint32_t num_scanlines;
+};
+
+struct vertex_output {
+    void* working_data;
+    float position[4];
+};
+
+struct render_context {
+    const struct pipeline* pipeline;
+    struct framebuffer* fb;
+
+    struct vertex_output* outputs;
+    uint8_t vertices;
+
+    uint32_t instance_id;
+    void* uniform_data;
+
+    semaphore_t* semaphore;
+};
+
+struct blend_context {
+    float src_alpha, dst_alpha;
 };
 
 static image_pixel image_get_pixel(const image_t* image, uint32_t x, uint32_t y) {
@@ -42,17 +65,13 @@ static void framebuffer_fill_attachment(image_t* attachment, const image_pixel* 
     }
 }
 
-void framebuffer_clear(struct framebuffer* fb, const image_pixel* clear_values) {
+void framebuffer_clear(rasterizer_t* rast, struct framebuffer* fb,
+                       const image_pixel* clear_values) {
     for (uint32_t i = 0; i < fb->attachment_count; i++) {
         image_t* attachment = fb->attachments[i];
         framebuffer_fill_attachment(attachment, &clear_values[i]);
     }
 }
-
-struct vertex_output {
-    void* working_data;
-    float position[4];
-};
 
 static void process_face_vertices(const struct indexed_render_call* data, uint32_t instance,
                                   uint32_t face, uint8_t indices, struct vertex_output* outputs) {
@@ -235,23 +254,6 @@ static bool pre_fragment_tests(const struct pipeline* pipeline, struct framebuff
 
     return true;
 }
-
-struct render_context {
-    const struct pipeline* pipeline;
-    struct framebuffer* fb;
-
-    struct vertex_output* outputs;
-    uint8_t vertices;
-
-    uint32_t instance_id;
-    void* uniform_data;
-
-    semaphore_t* semaphore;
-};
-
-struct blend_context {
-    float src_alpha, dst_alpha;
-};
 
 static float get_blending_factor(blend_factor factor, const struct blend_context* bc) {
     switch (factor) {
