@@ -264,8 +264,11 @@ void imgui_render(ImDrawData* data, struct framebuffer* fb) {
     for (int i = 0; i < data->CmdListsCount; i++) {
         ImDrawList* draw_list = data->CmdLists.Data[i];
 
-        const void* vertices = draw_list->VtxBuffer.Data;
-        call.vertices = &vertices;
+        struct vertex_buffer vbuf;
+        vbuf.data = draw_list->VtxBuffer.Data;
+        vbuf.size = draw_list->VtxBuffer.Size * sizeof(struct ImDrawVert);
+
+        call.vertices = &vbuf;
         call.indices = draw_list->IdxBuffer.Data;
 
         for (int j = 0; j < draw_list->CmdBuffer.Size; j++) {

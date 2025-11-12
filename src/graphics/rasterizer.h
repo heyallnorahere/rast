@@ -12,6 +12,9 @@ struct rect;
 typedef struct image image_t;
 typedef union image_pixel image_pixel;
 
+// from capture.h
+typedef struct capture capture_t;
+
 struct framebuffer {
     image_t* const* attachments;
     uint32_t attachment_count;
@@ -115,8 +118,13 @@ struct pipeline {
     const struct blend_attachment* blend_attachments;
 };
 
+struct vertex_buffer {
+    const void* data;
+    size_t size;
+};
+
 struct indexed_render_call {
-    const void* const* vertices;
+    const struct vertex_buffer* vertices;
     const uint16_t* indices;
 
     uint32_t vertex_offset;
@@ -133,8 +141,10 @@ struct indexed_render_call {
 
 typedef struct rasterizer rasterizer_t;
 
-rasterizer_t* rasterizer_create(uint32_t num_scanlines, bool multithread);
+rasterizer_t* rasterizer_create(bool multithread);
 void rasterizer_destroy(rasterizer_t* rast);
+
+void rasterizer_set_current_capture(rasterizer_t* rast, capture_t* cap);
 
 void framebuffer_clear(rasterizer_t* rast, struct framebuffer* fb, const image_pixel* clear_values);
 

@@ -35,15 +35,15 @@ struct captured_primitive {
 };
 
 struct captured_instance {
-    uint32_t primitive_count;
     struct captured_primitive* primitives;
 };
 
 struct captured_render_call {
-    uint32_t instance_count;
+    uint32_t first_instance, instance_count;
     struct captured_instance* instances;
 
-    uint8_t vertex_count;
+    uint8_t vertices_per_primitive;
+    uint32_t primitive_count;
     size_t working_data_stride;
 
     uint32_t vertex_buffer_count;

@@ -9,6 +9,7 @@
 #include "graphics/window.h"
 #include "graphics/imgui.h"
 #include "graphics/image.h"
+#include "debug/capture.h"
 
 struct uniforms {
     float view_projection[4 * 4];
@@ -148,9 +149,13 @@ int main(int argc, const char** argv) {
         }
     }
 
-    const void* vertices[] = { s_vertices, instances };
-    call.vertices = vertices;
+    struct vertex_buffer vbufs[2];
+    vbufs[0].data = s_vertices;
+    vbufs[0].size = 3 * sizeof(struct vertex);
+    vbufs[1].data = instances;
+    vbufs[1].size = instance_count * sizeof(struct instance);
 
+    call.vertices = vbufs;
     call.indices = s_indices;
     call.index_count = 3;
     call.instance_count = instance_count;
@@ -178,11 +183,14 @@ int main(int argc, const char** argv) {
     float camera_distance = 2.f;
 
     window = window_create("rast", 1600, 900);
-    rast = rasterizer_create(32, true);
+    rast = rasterizer_create(true);
 
     igCreateContext(NULL);
     window_init_imgui(window);
     imgui_init_renderer(rast);
+
+    capture_t* cap = capture_new();
+    rasterizer_set_current_capture(rast, cap);
 
     while (!window_is_close_requested(window)) {
         window_poll();
@@ -295,7 +303,11 @@ int main(int argc, const char** argv) {
             success = false;
             break;
         }
+        
+        rasterizer_set_current_capture(rast, NULL);
     }
+
+    capture_destroy(cap);
 
     imgui_shutdown_renderer();
     window_destroy(window);

@@ -6,12 +6,16 @@
 #include "math/vec.h"
 #include "math/geo.h"
 #include "graphics/image.h"
+#include "debug/capture.h"
 
 #include <glib.h>
+
+#include <math.h>
 
 struct rasterizer {
     thread_worker_t* worker;
     uint32_t num_scanlines;
+    capture_t* current_capture;
 };
 
 struct vertex_output {
@@ -71,14 +75,27 @@ void framebuffer_clear(rasterizer_t* rast, struct framebuffer* fb,
         image_t* attachment = fb->attachments[i];
         framebuffer_fill_attachment(attachment, &clear_values[i]);
     }
+
+    if (rast->current_capture) {
+        capture_add_framebuffer_clear(rast->current_capture, fb, clear_values);
+    }
 }
 
 static void process_face_vertices(const struct indexed_render_call* data, uint32_t instance,
-                                  uint32_t face, uint8_t indices, struct vertex_output* outputs) {
+                                  uint32_t face, uint8_t indices, struct vertex_output* outputs,
+                                  struct captured_primitive* captured) {
     struct shader_context context;
     context.instance_index = instance;
     context.uniform_data = data->uniform_data;
     context.working_data = NULL;
+
+    size_t working_size = data->pipeline->shader.working_size;
+    if (captured) {
+        captured->indices = mem_alloc(sizeof(uint32_t) * indices);
+        captured->working_data = mem_alloc(working_size * indices);
+        captured->vertex_positions = mem_alloc(sizeof(float) * 4 * indices);
+        captured->instance_index = instance;
+    }
 
     const void* vertex_data[data->pipeline->binding_count];
     for (uint8_t i = 0; i < indices; i++) {
@@ -87,6 +104,7 @@ static void process_face_vertices(const struct indexed_render_call* data, uint32
 
         for (uint32_t j = 0; j < data->pipeline->binding_count; j++) {
             const struct vertex_binding* binding = &data->pipeline->bindings[j];
+            const struct vertex_buffer* vbuf = &data->vertices[j];
 
             uint32_t buffer_index;
             switch (binding->input_rate) {
@@ -101,15 +119,24 @@ static void process_face_vertices(const struct indexed_render_call* data, uint32
             }
 
             size_t offset = buffer_index * binding->stride;
-            vertex_data[j] = data->vertices[j] + offset;
+            g_assert(offset + binding->stride <= vbuf->size);
+
+            vertex_data[j] = vbuf->data + offset;
         }
 
-        struct vertex_output* current_output = outputs + i;
+        struct vertex_output* current_output = &outputs[i];
         memset(current_output->position, 0, 4 * sizeof(float));
         current_output->position[3] = 1.f;
 
         context.working_data = current_output->working_data;
         data->pipeline->shader.vertex_stage(vertex_data, &context, current_output->position);
+
+        if (captured) {
+            captured->indices[i] = context.vertex_index;
+
+            memcpy(captured->working_data + i * working_size, context.working_data, working_size);
+            memcpy(captured->vertex_positions + i * 4, current_output->position, 4 * sizeof(float));
+        }
     }
 }
 
@@ -432,16 +459,18 @@ void render_scanline(void* user_data, void* job) {
     }
 }
 
-rasterizer_t* rasterizer_create(uint32_t num_scanlines, bool multithread) {
+rasterizer_t* rasterizer_create(bool multithread) {
     rasterizer_t* rast = mem_alloc(sizeof(rasterizer_t));
 
     if (multithread) {
         rast->worker = thread_worker_start(render_scanline, rast);
+        rast->num_scanlines = thread_worker_get_thread_count(rast->worker);
     } else {
         rast->worker = NULL;
+        rast->num_scanlines = 1;
     }
 
-    rast->num_scanlines = num_scanlines;
+    rast->current_capture = NULL;
     return rast;
 }
 
@@ -454,7 +483,11 @@ void rasterizer_destroy(rasterizer_t* rast) {
     mem_free(rast);
 }
 
-static uint32_t map_dimension(float value, uint32_t size) {
+void rasterizer_set_current_capture(rasterizer_t* rast, capture_t* cap) {
+    rast->current_capture = cap;
+}
+
+static float map_dimension(float value, uint32_t size) {
     if (value < -1.f) {
         return 0;
     }
@@ -478,23 +511,23 @@ static bool gen_scissor_rect(const struct render_context* rc, struct rect* sciss
     for (uint8_t i = 0; i < rc->vertices; i++) {
         const float* point = rc->outputs[i].position;
 
-        uint32_t x = map_dimension(point[0], rc->fb->width);
-        uint32_t y = map_dimension(point[1], rc->fb->height);
+        float x = map_dimension(point[0], rc->fb->width);
+        float y = map_dimension(point[1], rc->fb->height);
 
         if (x < x0) {
-            x0 = x;
+            x0 = floor(x);
         }
 
         if (y < y0) {
-            y0 = y;
+            y0 = floor(y);
         }
 
         if (x > x1) {
-            x1 = x;
+            x1 = ceil(x);
         }
 
         if (y > y1) {
-            y1 = y;
+            y1 = ceil(y);
         }
     }
 
@@ -528,14 +561,18 @@ static bool gen_scissor_rect(const struct render_context* rc, struct rect* sciss
 }
 
 static void render_face(rasterizer_t* rast, const struct indexed_render_call* data, uint32_t face,
-                        struct render_context* rc) {
-    process_face_vertices(data, rc->instance_id, face, rc->vertices, rc->outputs);
+                        struct render_context* rc, struct captured_primitive* captured) {
+    process_face_vertices(data, rc->instance_id, face, rc->vertices, rc->outputs, captured);
 
     // todo: support geometry shaders?
 
     struct rect scissor;
     if (!gen_scissor_rect(rc, &scissor, data->scissor_rect)) {
         return;
+    }
+
+    if (captured) {
+        memcpy(&captured->scissor, &scissor, sizeof(struct rect));
     }
 
     uint32_t total_jobs = MIN(scissor.height, rast->num_scanlines);
@@ -599,12 +636,57 @@ void render_indexed(rasterizer_t* rast, struct indexed_render_call* data) {
         rc.semaphore = NULL;
     }
 
+    struct captured_render_call* captured = NULL;
+    if (rast->current_capture) {
+        captured = mem_alloc(sizeof(struct captured_render_call));
+        captured->first_instance = data->first_instance;
+        captured->instance_count = data->instance_count;
+        captured->vertices_per_primitive = vertices_per_face;
+        captured->primitive_count = face_count;
+        captured->vertex_buffer_count = data->pipeline->binding_count;
+        captured->working_data_stride = data->pipeline->shader.working_size;
+
+        captured->vertex_buffers =
+            mem_alloc(sizeof(struct captured_vertex_buffer) * captured->vertex_buffer_count);
+
+        captured->instances = mem_alloc(sizeof(struct captured_instance) * data->instance_count);
+
+        for (uint32_t i = 0; i < captured->vertex_buffer_count; i++) {
+            struct captured_vertex_buffer* captured_vbuf = &captured->vertex_buffers[i];
+            const struct vertex_binding* binding = &data->pipeline->bindings[i];
+            const struct vertex_buffer* vbuf = &data->vertices[i];
+
+            captured_vbuf->instance_data = binding->input_rate == VERTEX_INPUT_RATE_INSTANCE;
+            captured_vbuf->vertex_stride = binding->stride;
+
+            captured_vbuf->size = vbuf->size;
+            captured_vbuf->data = mem_alloc(vbuf->size);
+            memcpy(captured_vbuf->data, vbuf->data, vbuf->size);
+        }
+    }
+
     for (uint32_t i = 0; i < data->instance_count; i++) {
         rc.instance_id = data->first_instance + i;
 
-        for (uint32_t j = 0; j < face_count; j++) {
-            render_face(rast, data, j, &rc);
+        struct captured_instance* captured_instance = NULL;
+        if (captured) {
+            captured_instance = &captured->instances[i];
+            captured_instance->primitives =
+                mem_alloc(sizeof(struct captured_primitive) * face_count);
         }
+
+        for (uint32_t j = 0; j < face_count; j++) {
+            struct captured_primitive* captured_primitive = NULL;
+            if (captured_instance) {
+                captured_primitive = &captured_instance->primitives[j];
+            }
+
+            render_face(rast, data, j, &rc, captured_primitive);
+        }
+    }
+
+    if (rast->current_capture && captured) {
+        capture_add_render_call(rast->current_capture, data->framebuffer, captured);
     }
 
     semaphore_destroy(rc.semaphore);

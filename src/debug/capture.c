@@ -27,7 +27,7 @@ static void capture_cleanup_render_call(struct captured_render_call* rc) {
     for (uint32_t i = 0; i < rc->instance_count; i++) {
         struct captured_instance* instance = &rc->instances[i];
 
-        for (uint32_t j = 0; j < instance->primitive_count; j++) {
+        for (uint32_t j = 0; j < rc->primitive_count; j++) {
             struct captured_primitive* primitive = &instance->primitives[j];
 
             mem_free(primitive->working_data);
