@@ -45,6 +45,10 @@ static struct list_node* list_node_alloc(void* data) {
 struct list_node* list_append(struct list* list, void* data) {
     struct list_node* new_node = list_node_alloc(data);
 
+    if (list->tail) {
+        list->tail->next = new_node;
+    }
+
     new_node->prev = list->tail;
     list->tail = new_node;
 
@@ -57,6 +61,10 @@ struct list_node* list_append(struct list* list, void* data) {
 
 struct list_node* list_prepend(struct list* list, void* data) {
     struct list_node* new_node = list_node_alloc(data);
+
+    if (list->head) {
+        list->head->prev = new_node;
+    }
 
     new_node->next = list->head;
     list->head = new_node;
