@@ -121,7 +121,8 @@ void imgui_init_renderer(rasterizer_t* rast) {
     data->color_blending.alpha.src_factor = BLEND_FACTOR_ONE;
     data->color_blending.alpha.dst_factor = BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
 
-    data->sampler.filter = SAMPLER_FILTER_LINEAR;
+    data->sampler.filter = SAMPLER_FILTER_NEAREST;
+    data->sampler.wrapping = SAMPLER_WRAPPING_REPEAT;
 
     // viewports? maybe
 }

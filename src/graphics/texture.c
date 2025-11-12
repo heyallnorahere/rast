@@ -74,18 +74,49 @@ static void texture_sample_nearest(const struct texture* texture, const float* u
     texture_get_pixel(texture->image, x, y, sample);
 }
 
+static float texture_repeat_coordinate(float value) {
+    while (value < 0.f || value > 1.f) {
+        value -= value > 0.f ? 1.f : -1.f;
+    }
+
+    return value;
+}
+
+static float texture_clamp_coordinate_to_edge(float value) {
+    if (value > 1.f) {
+        value = 1.f;
+    }
+
+    if (value < 0.f) {
+        value = 0.f;
+    }
+
+    return value;
+}
+
 void texture_sample(const struct texture* texture, const float* uv, float* sample) {
     float corrected_uv[2];
 
-    // todo: if wrapping, correct uv
-    memcpy(corrected_uv, uv, 2 * sizeof(float));
+    for (uint32_t i = 0; i < 2; i++) {
+        float value = uv[i];
+        switch (texture->sampler->wrapping) {
+        case SAMPLER_WRAPPING_REPEAT:
+            value = texture_repeat_coordinate(value);
+            break;
+        case SAMPLER_WRAPPING_CLAMP_TO_EDGE:
+            value = texture_clamp_coordinate_to_edge(value);
+            break;
+        }
+
+        corrected_uv[i] = value;
+    }
 
     switch (texture->sampler->filter) {
     case SAMPLER_FILTER_LINEAR:
-        texture_sample_linear(texture, uv, sample);
+        texture_sample_linear(texture, corrected_uv, sample);
         break;
     case SAMPLER_FILTER_NEAREST:
-        texture_sample_nearest(texture, uv, sample);
+        texture_sample_nearest(texture, corrected_uv, sample);
         break;
     }
 }

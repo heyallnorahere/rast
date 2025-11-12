@@ -8,8 +8,14 @@ typedef enum {
     SAMPLER_FILTER_LINEAR,
 } sampler_filter;
 
+typedef enum {
+    SAMPLER_WRAPPING_REPEAT,
+    SAMPLER_WRAPPING_CLAMP_TO_EDGE,
+} sampler_wrapping;
+
 struct sampler {
     sampler_filter filter;
+    sampler_wrapping wrapping;
 };
 
 // from image.h
