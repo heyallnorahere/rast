@@ -9,7 +9,7 @@
 #include "graphics/window.h"
 #include "graphics/imgui.h"
 #include "graphics/image.h"
-#include "debug/capture.h"
+#include "debug/diag.h"
 
 struct uniforms {
     float view_projection[4 * 4];
@@ -189,12 +189,16 @@ int main(int argc, const char** argv) {
     window_init_imgui(window);
     imgui_init_renderer(rast);
 
-    capture_t* cap = capture_new();
-    rasterizer_set_current_capture(rast, cap);
+    ImGuiIO* io = igGetIO_Nil();
+    io->ConfigFlags |= ImGuiConfigFlags_DockingEnable;
 
+    diag_init();
     while (!window_is_close_requested(window)) {
         window_poll();
         igNewFrame();
+
+        diag_update();
+        rasterizer_set_current_capture(rast, diag_current_capture());
 
         static bool draw_demo = true;
         if (draw_demo) {
@@ -307,7 +311,7 @@ int main(int argc, const char** argv) {
         rasterizer_set_current_capture(rast, NULL);
     }
 
-    capture_destroy(cap);
+    diag_shutdown();
 
     imgui_shutdown_renderer();
     window_destroy(window);
