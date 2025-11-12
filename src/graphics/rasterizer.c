@@ -356,8 +356,8 @@ static void render_pixel(uint32_t x, uint32_t y, const struct render_context* rc
     float weights[rc->vertices];
     float point[2];
 
-    point[0] = (float)x / (float)rc->fb->width * 2.f - 1.f;
-    point[1] = (float)y / (float)rc->fb->height * 2.f - 1.f;
+    point[0] = ((float)x + 0.5f) / (float)rc->fb->width * 2.f - 1.f;
+    point[1] = ((float)y + 0.5f) / (float)rc->fb->height * 2.f - 1.f;
 
     if (!face_contains_point(rc->pipeline->winding == WINDING_ORDER_CW, rc->pipeline->cull_back,
                              rc->outputs, rc->vertices, point, weights)) {
