@@ -69,21 +69,21 @@ void mat_transpose(const float* mat, uint32_t src_rows, uint32_t src_columns, fl
     }
 }
 
-// right-handed, zero-to-one depth
+// right-handed, negative-one-to-one depth
 // however, GLM IS COLUMN MAJOR
 // our matrices are ROW MAJOR
 
-// https://github.com/g-truc/glm/blob/master/glm/ext/matrix_clip_space.inl#L233
+// https://github.com/g-truc/glm/blob/master/glm/ext/matrix_clip_space.inl#L249
 void mat_perspective(float* mat, float vfov, float aspect, float near, float far) {
     memset(mat, 0, 4 * 4 * sizeof(float));
 
     /*
-        mat<4, 4, T, defaultp> Result(static_cast<T>(0));
-        Result[0][0] = static_cast<T>(1) / (aspect * tanHalfFovy);
-        Result[1][1] = static_cast<T>(1) / (tanHalfFovy);
-        Result[2][2] = zFar / (zNear - zFar);
-        Result[2][3] = - static_cast<T>(1);
-        Result[3][2] = -(zFar * zNear) / (zFar - zNear);
+		mat<4, 4, T, defaultp> Result(static_cast<T>(0));
+		Result[0][0] = static_cast<T>(1) / (aspect * tanHalfFovy);
+		Result[1][1] = static_cast<T>(1) / (tanHalfFovy);
+		Result[2][2] = - (zFar + zNear) / (zFar - zNear);
+		Result[2][3] = - static_cast<T>(1);
+		Result[3][2] = - (static_cast<T>(2) * zFar * zNear) / (zFar - zNear);
     */
 
     float tan_half_vfov = tan(vfov / 2.f);
