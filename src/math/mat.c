@@ -58,6 +58,17 @@ void mat_dot(const float* lhs, const float* rhs, uint32_t m, uint32_t x, uint32_
     }
 }
 
+void mat_transpose(const float* mat, uint32_t src_rows, uint32_t src_columns, float* result) {
+    for (uint32_t r = 0; r < src_rows; r++) {
+        for (uint32_t c = 0; c < src_columns; c++) {
+            uint32_t src_offset = mat_offset(src_columns, r, c);
+            uint32_t dst_offset = mat_offset(src_rows, c, r);
+
+            result[dst_offset] = mat[src_offset];
+        }
+    }
+}
+
 // right-handed, zero-to-one depth
 // however, GLM IS COLUMN MAJOR
 // our matrices are ROW MAJOR
@@ -84,10 +95,10 @@ void mat_perspective(float* mat, float vfov, float aspect, float near, float far
     mat[5] = 1.f / tan_half_vfov;
 
     // mat[2, 2]
-    mat[10] = far / (near - far);
+    mat[10] = -(far + near) / (near - far);
 
     // mat[2, 3]
-    mat[11] = -(far * near) / (far - near);
+    mat[11] = -(2.f * far * near) / (far - near);
 
     // mat[3, 2]
     mat[14] = -1.f;

@@ -12,7 +12,8 @@
 #include "debug/diag.h"
 
 struct uniforms {
-    float view_projection[4 * 4];
+    float projection[4 * 4];
+    float view[4 * 4];
 };
 
 struct vertex {
@@ -48,7 +49,11 @@ static void vertex_shader(const void* const* vertex_data, const struct shader_co
 
     float world_position[4];
     mat_dot(instance->model, vertex_pos, 4, 4, 1, world_position);
-    mat_dot(uniforms->view_projection, world_position, 4, 4, 1, position);
+
+    float view_position[4];
+    mat_dot(uniforms->view, world_position, 4, 4, 1, view_position);
+
+    mat_dot(uniforms->projection, view_position, 4, 4, 1, position);
 
     struct shader_working_data* result = context->working_data;
     result->color = instance->color;
@@ -147,6 +152,54 @@ int main(int argc, const char** argv) {
             uint8_t channel = rand() & 0xFF;
             instance->color |= channel << ((j + 1) * 8);
         }
+
+        mat_identity(instance->model, 4);
+
+        // scale
+        float scale[4 * 4];
+        mat_identity(scale, 4);
+
+        for (uint32_t j = 0; j < 3; j++) {
+            // scale[j, j]
+            scale[j * 5] *= 0.25f;
+        }
+
+        float theta = (float)M_PI * 2.f * (float)i / (float)instance_count;
+
+        // rotation
+        float rotation[4 * 4];
+        mat_identity(rotation, 4);
+
+        // rotating around y
+        // this means that i is now i'cos(theta) - k'sin(theta)
+        // accordingly, k is now i'sin(theta) + k'cos(theta)
+
+        float cos_theta = cosf(theta);
+        float sin_theta = sinf(theta);
+
+        // rotation[0, 0]
+        rotation[0] = cos_theta;
+
+        // rotation[0, 2]
+        rotation[2] = -sin_theta;
+
+        // rotation[2, 0]
+        rotation[8] = sin_theta;
+
+        // rotation[2, 2]
+        rotation[10] = cos_theta;
+
+        // translation
+        float translation[4 * 4];
+        mat_identity(translation, 4);
+
+        // negative z
+        // mat[2, 3]
+        translation[11] = -0.5f;
+
+        float displacement[4 * 4];
+        mat_dot(rotation, translation, 4, 4, 4, displacement);
+        mat_dot(scale, displacement, 4, 4, 4, instance->model);
     }
 
     struct vertex_buffer vbufs[2];
@@ -180,7 +233,7 @@ int main(int argc, const char** argv) {
 
     float camera_position[3];
     float camera_theta = 0.f;
-    float camera_distance = 2.f;
+    float camera_distance = 5.f;
 
     window = window_create("rast", 1600, 900);
     rast = rasterizer_create(true);
@@ -192,7 +245,10 @@ int main(int argc, const char** argv) {
     ImGuiIO* io = igGetIO_Nil();
     io->ConfigFlags |= ImGuiConfigFlags_DockingEnable;
 
-    diag_init();
+    // diagnostics ui is kinda not helpful rn
+    // todo: work on it some more
+    // diag_init();
+
     while (!window_is_close_requested(window)) {
         window_poll();
         igNewFrame();
@@ -212,57 +268,6 @@ int main(int argc, const char** argv) {
         float delta_seconds = (float)delta.tv_sec + (float)delta.tv_nsec / 1e+9f;
         total_seconds += delta_seconds;
 
-        for (uint32_t i = 0; i < instance_count; i++) {
-            struct instance* instance = &instances[i];
-            mat_identity(instance->model, 4);
-
-            // scale
-            float scale[4 * 4];
-            mat_identity(scale, 4);
-
-            for (uint32_t j = 0; j < 3; j++) {
-                // scale[j, j]
-                scale[j * 5] *= 0.25f;
-            }
-
-            float theta = (float)M_PI * 2.f * (float)i / (float)instance_count;
-
-            // rotation
-            float rotation[4 * 4];
-            mat_identity(rotation, 4);
-
-            // rotating around y
-            // this means that i is now i'cos(theta) - k'sin(theta)
-            // accordingly, k is now i'sin(theta) + k'cos(theta)
-
-            float cos_theta = cosf(theta);
-            float sin_theta = sinf(theta);
-
-            // rotation[0, 0]
-            rotation[0] = cos_theta;
-
-            // rotation[0, 2]
-            rotation[2] = -sin_theta;
-
-            // rotation[2, 0]
-            rotation[8] = sin_theta;
-
-            // rotation[2, 2]
-            rotation[10] = cos_theta;
-
-            // translation
-            float translation[4 * 4];
-            mat_identity(translation, 4);
-
-            // negative z
-            // mat[2, 3]
-            translation[11] = -0.5f;
-
-            float displacement[4 * 4];
-            mat_dot(rotation, translation, 4, 4, 4, displacement);
-            mat_dot(scale, displacement, 4, 4, 4, instance->model);
-        }
-
         image_t* backbuffer = window_get_backbuffer(window);
         if (!backbuffer) {
             success = false;
@@ -278,9 +283,6 @@ int main(int argc, const char** argv) {
         static const float vfov = M_PI / 4.f;
         float aspect = (float)backbuffer->width / (float)backbuffer->height;
 
-        float projection[4 * 4];
-        mat_perspective(projection, vfov, aspect, 0.1f, 100.f);
-
         float cos_theta = cosf(camera_theta);
         float sin_theta = sinf(camera_theta);
 
@@ -288,14 +290,13 @@ int main(int argc, const char** argv) {
         float cos_phi = cosf(phi);
         float sin_phi = sinf(phi);
 
-        camera_theta += delta_seconds;
+        camera_theta += delta_seconds * 0.1f;
         camera_position[0] = cos_theta * cos_phi * camera_distance;
         camera_position[1] = sin_phi * camera_distance;
         camera_position[2] = sin_theta * cos_phi * camera_distance;
 
-        float view[4 * 4];
-        mat_look_at(view, camera_position, center, up);
-        mat_dot(projection, view, 4, 4, 4, uniforms.view_projection);
+        mat_perspective(uniforms.projection, vfov, aspect, 0.1f, 100.f);
+        mat_look_at(uniforms.view, camera_position, center, up);
 
         framebuffer_clear(rast, &fb, clear);
         render_indexed(rast, &call);
@@ -307,7 +308,7 @@ int main(int argc, const char** argv) {
             success = false;
             break;
         }
-        
+
         rasterizer_set_current_capture(rast, NULL);
     }
 
