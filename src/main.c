@@ -312,6 +312,9 @@ int main(int argc, const char** argv) {
         rasterizer_set_current_capture(rast, NULL);
     }
 
+    // free depth buffer
+    image_free(attachments[1]);
+
     diag_shutdown();
 
     imgui_shutdown_renderer();
