@@ -25,6 +25,7 @@ struct window {
     bool close_requested;
 
     image_t* backbuffer;
+    SDL_Surface* backbuffer_surface;
 
     ImGuiContext* imgui;
 };
@@ -91,6 +92,7 @@ window_t* window_create(const char* title, uint32_t width, uint32_t height) {
     window->window = sdl_window;
     window->close_requested = false;
     window->backbuffer = NULL;
+    window->backbuffer_surface = NULL;
     window->imgui = NULL;
 
     size_t id = (size_t)SDL_GetWindowID(sdl_window);
@@ -112,6 +114,7 @@ void window_destroy(window_t* window) {
     size_t id = (size_t)SDL_GetWindowID(window->window);
     g_hash_table_remove(s_video_data->windows, (gconstpointer)id);
 
+    SDL_DestroySurface(window->backbuffer_surface);
     image_free(window->backbuffer);
 
     SDL_DestroyWindow(window->window);
@@ -216,7 +219,7 @@ void window_poll() {
 bool window_is_close_requested(window_t* window) { return window->close_requested; }
 
 static bool window_is_backbuffer_valid(window_t* window) {
-    if (!window->backbuffer) {
+    if (!window->backbuffer_surface) {
         return false;
     }
 
@@ -225,7 +228,7 @@ static bool window_is_backbuffer_valid(window_t* window) {
         return false;
     }
 
-    return window->backbuffer->width == width && window->backbuffer->height == height;
+    return window->backbuffer_surface->w == width && window->backbuffer_surface->h == height;
 }
 
 static bool window_validate_backbuffer(window_t* window) {
@@ -238,10 +241,20 @@ static bool window_validate_backbuffer(window_t* window) {
         return false;
     }
 
+    SDL_DestroySurface(window->backbuffer_surface);
     image_free(window->backbuffer);
-    window->backbuffer = image_allocate(width, height, IMAGE_FORMAT_COLOR);
 
-    return window->backbuffer;
+    window->backbuffer = image_allocate(width, height, IMAGE_FORMAT_COLOR);
+    if (window->backbuffer) {
+        window->backbuffer_surface =
+            SDL_CreateSurfaceFrom(width, height, SDL_PIXELFORMAT_RGBA8888, window->backbuffer->data,
+                                  width * window->backbuffer->pixel_stride);
+
+        return true;
+    } else {
+        window->backbuffer_surface = NULL;
+        return false;
+    }
 }
 
 image_t* window_get_backbuffer(window_t* window) {
@@ -262,7 +275,7 @@ bool window_swap_buffers(window_t* window) {
         return false;
     }
 
-    if (!SDL_BlitSurface(window->backbuffer->surface, NULL, window_surface, NULL)) {
+    if (!SDL_BlitSurface(window->backbuffer_surface, NULL, window_surface, NULL)) {
         return false;
     }
 

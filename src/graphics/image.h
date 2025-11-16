@@ -20,8 +20,6 @@ typedef struct image {
     uint32_t width, height;
     image_format format;
     size_t pixel_stride;
-
-    void* surface;
 } image_t;
 
 image_t* image_allocate(uint32_t width, uint32_t height, image_format format);
