@@ -1,32 +1,90 @@
 #include "thread_worker.h"
 
 #include "core/mem.h"
+#include "core/list.h"
 
-#include <glib.h>
+#include <stdbool.h>
+
+#include <pthread.h>
+#include <unistd.h>
+
+struct worker_thread {
+    pthread_t id;
+    thread_worker_t* worker;
+};
 
 typedef struct thread_worker {
-    GThreadPool* pool;
+    pthread_mutex_t mutex;
+
+    pthread_cond_t new_job;
+    struct list jobs;
+
+    uint32_t thread_count;
+    struct worker_thread* threads;
+
+    pthread_cond_t thread_stopped;
+    bool should_stop;
+    uint32_t stopped_threads;
 
     thread_worker_func callback;
     void* user_data;
 } thread_worker_t;
 
-static void thread_worker_job(gpointer job, gpointer user_data) {
-    thread_worker_t* worker = user_data;
-    worker->callback(worker->user_data, job);
+static void* worker_thread_routine(void* user_data) {
+    struct worker_thread* thread = user_data;
+
+    while (true) {
+        pthread_mutex_lock(&thread->worker->mutex);
+
+        while (!thread->worker->jobs.head) {
+            if (thread->worker->should_stop) {
+                break;
+            }
+
+            pthread_cond_wait(&thread->worker->new_job, &thread->worker->mutex);
+        }
+
+        if (thread->worker->should_stop) {
+            thread->worker->stopped_threads++;
+            pthread_mutex_unlock(&thread->worker->mutex);
+
+            pthread_cond_signal(&thread->worker->thread_stopped);
+            break;
+        }
+
+        struct list_node* head = thread->worker->jobs.head;
+        void* job = head->data;
+        list_remove(&thread->worker->jobs, head);
+
+        pthread_mutex_unlock(&thread->worker->mutex);
+        thread->worker->callback(thread->worker->user_data, job);
+    }
+
+    return NULL;
 }
 
 thread_worker_t* thread_worker_start(thread_worker_func callback, void* user_data) {
     thread_worker_t* worker = mem_alloc(sizeof(thread_worker_t));
+    pthread_mutex_init(&worker->mutex, NULL);
+
     worker->callback = callback;
     worker->user_data = user_data;
 
-    guint num_processors = g_get_num_processors();
-    worker->pool = g_thread_pool_new(thread_worker_job, worker, (gint)num_processors, TRUE, NULL);
+    pthread_cond_init(&worker->new_job, NULL);
+    list_init(&worker->jobs);
 
-    if (!worker->pool) {
-        mem_free(worker);
-        return NULL;
+    worker->thread_count = sysconf(_SC_NPROCESSORS_ONLN);
+    worker->threads = mem_alloc(sizeof(struct worker_thread) * worker->thread_count);
+
+    pthread_cond_init(&worker->thread_stopped, NULL);
+    worker->should_stop = false;
+    worker->stopped_threads = 0;
+
+    for (uint32_t i = 0; i < worker->thread_count; i++) {
+        struct worker_thread* thread = &worker->threads[i];
+
+        thread->worker = worker;
+        pthread_create(&thread->id, NULL, worker_thread_routine, thread);
     }
 
     return worker;
@@ -37,18 +95,37 @@ void thread_worker_stop(thread_worker_t* worker) {
         return;
     }
 
-    g_thread_pool_free(worker->pool, FALSE, TRUE);
+    pthread_mutex_lock(&worker->mutex);
+    worker->should_stop = true;
+
+    while (worker->stopped_threads < worker->thread_count) {
+        // we do this so that waiting threads arent left hanging
+        pthread_cond_signal(&worker->new_job);
+
+        pthread_cond_wait(&worker->thread_stopped, &worker->mutex);
+    }
+
+    pthread_mutex_unlock(&worker->mutex);
+
+    pthread_mutex_destroy(&worker->mutex);
+    pthread_cond_destroy(&worker->new_job);
+    pthread_cond_destroy(&worker->thread_stopped);
+
+    // shouldnt do anything but just to be safe ig
+    list_free(&worker->jobs);
+
+    mem_free(worker->threads);
     mem_free(worker);
 }
 
 uint32_t thread_worker_get_thread_count(const thread_worker_t* worker) {
-    return g_thread_pool_get_max_threads(worker->pool);
+    return worker->thread_count;
 }
 
-void thread_worker_set_data(thread_worker_t* worker, void* user_data) {
-    worker->user_data = user_data;
-}
+void thread_worker_push_job(thread_worker_t* worker, void* job) {
+    pthread_mutex_lock(&worker->mutex);
+    list_append(&worker->jobs, job);
+    pthread_mutex_unlock(&worker->mutex);
 
-void thread_worker_push_job(const thread_worker_t* worker, void* job) {
-    g_thread_pool_push(worker->pool, job, NULL);
+    pthread_cond_signal(&worker->new_job);
 }

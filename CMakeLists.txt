@@ -3,9 +3,6 @@ cmake_minimum_required(VERSION 3.21)
 project(rast LANGUAGES C CXX)
 
 find_package(SDL3 REQUIRED)
-find_package(PkgConfig REQUIRED)
-
-pkg_check_modules(glib2 REQUIRED IMPORTED_TARGET glib-2.0)
 
 set(RAST_SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src")
 file(
@@ -67,7 +64,6 @@ target_link_libraries(
     m
     rast_imgui
     SDL3::SDL3
-    PkgConfig::glib2
 )
 
 add_executable(demo ${RAST_MAIN})

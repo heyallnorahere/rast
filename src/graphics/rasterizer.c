@@ -8,9 +8,8 @@
 #include "graphics/image.h"
 #include "debug/capture.h"
 
-#include <glib.h>
-
 #include <math.h>
+#include <string.h>
 
 struct rasterizer {
     thread_worker_t* worker;
@@ -114,13 +113,9 @@ static void process_face_vertices(const struct indexed_render_call* data, uint32
             case VERTEX_INPUT_RATE_INSTANCE:
                 buffer_index = instance;
                 break;
-            default:
-                g_assert_not_reached();
             }
 
             size_t offset = buffer_index * binding->stride;
-            g_assert(offset + binding->stride <= vbuf->size);
-
             vertex_data[j] = vbuf->data + offset;
         }
 
@@ -200,8 +195,6 @@ static size_t parameter_element_stride(element_type type) {
     case ELEMENT_TYPE_FLOAT:
         return sizeof(float);
         break;
-    default:
-        g_assert_not_reached();
     }
 }
 
@@ -227,8 +220,6 @@ static void shader_blend_parameters(const struct shader* shader,
                 case ELEMENT_TYPE_FLOAT:
                     vertex_value = *(float*)source_data;
                     break;
-                default:
-                    g_assert_not_reached();
                 }
 
                 float weight = weights[k];
@@ -247,8 +238,6 @@ static void shader_blend_parameters(const struct shader* shader,
             case ELEMENT_TYPE_FLOAT:
                 *(float*)destination_data = result_value;
                 break;
-            default:
-                g_assert_not_reached();
             }
         }
     }
@@ -322,7 +311,7 @@ static uint32_t blend_channel(uint8_t src, uint8_t dst, const struct blend_conte
         result = 0.f;
     }
 
-    result = MAX(0.f, result);
+    result = result > 0.f ? result : 0.f;
     return result > 1.f ? 0xFF : (uint8_t)(result * (float)0xFF);
 }
 
@@ -575,9 +564,10 @@ static void render_face(rasterizer_t* rast, const struct indexed_render_call* da
         memcpy(&captured->scissor, &scissor, sizeof(struct rect));
     }
 
-    uint32_t total_jobs = MIN(scissor.height, rast->num_scanlines);
-    struct scanline scanlines[total_jobs];
+    uint32_t total_jobs =
+        scissor.height < rast->num_scanlines ? scissor.height : rast->num_scanlines;
 
+    struct scanline scanlines[total_jobs];
     for (uint32_t i = 0; i < total_jobs; i++) {
         struct scanline* sl = &scanlines[i];
         sl->index = i;
