@@ -2,14 +2,8 @@
 
 #include "core/mem.h"
 
-#define SDL_MAIN_HANDLED
-#include <SDL3/SDL.h>
-
-#include <glib.h>
-
 image_t* image_allocate(uint32_t width, uint32_t height, image_format format) {
     size_t pixel_stride = 0;
-    SDL_PixelFormat pixel_format = SDL_PIXELFORMAT_UNKNOWN;
 
     switch (format) {
     case IMAGE_FORMAT_COLOR:
