@@ -245,6 +245,10 @@ static void shader_blend_parameters(const struct shader* shader,
 
 static bool pre_fragment_tests(const struct pipeline* pipeline, struct framebuffer* fb, uint32_t x,
                                uint32_t y, float current_depth) {
+    if (pipeline->depth.test && current_depth < 0.f) {
+        return false;
+    }
+
     for (uint32_t i = 0; i < fb->attachment_count; i++) {
         image_t* attachment = fb->attachments[i];
 
